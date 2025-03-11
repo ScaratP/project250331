@@ -85,7 +85,6 @@ suspend fun fetchWebData(url: String, cookies: String?): List<Schedule> {
 
             val endTimes = listOf("08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00")
 
-
             for ((rowIndex, row) in rows.withIndex()) {
                 val columns = row.select("td")
 
@@ -96,8 +95,8 @@ suspend fun fetchWebData(url: String, cookies: String?): List<Schedule> {
                     val id = "$colIndex$realRowIndex"
 
                     val weekDay = if (colIndex in 1..7) weekDays[colIndex - 1] else "未知"
-                    val startTime = if (realRowIndex in startTimes.indices) startTimes[realRowIndex] else "None"
-                    val endTime = if (realRowIndex in endTimes.indices) endTimes[realRowIndex] else "None"
+                    val startTime = (if (realRowIndex in startTimes.indices) startTimes[realRowIndex] else "0")//.toLong()
+                    val endTime = (if (realRowIndex in endTimes.indices) endTimes[realRowIndex] else "0")//.toLong()
 
                     if (title.isNotEmpty()) {
                         Log.d("WebScraper", "Extracted [$id]: $title")
@@ -186,7 +185,6 @@ fun ScheduleScreen(viewModel: CourseViewModel) {
             val fetchedData = fetchWebData(
                 "https://infosys.nttu.edu.tw/n_CourseBase_Select/WeekCourseList.aspx?ItemParam=", cookies!!
             )
-
             viewModel.clearAllCourses() // 避免重複儲存
             fetchedData.forEach { course ->
                 viewModel.insertCourse(
@@ -215,9 +213,7 @@ fun ScheduleScreen(viewModel: CourseViewModel) {
             modifier = Modifier.padding(16.dp)
         )
 
-
         if (scheduleList.isEmpty() && cookies == null) {
-            // **如果資料庫為空且沒有 cookies，則顯示 WebView 進行登入**
             WebViewScreen("https://infosys.nttu.edu.tw/InfoLoginNew.aspx") {
                 cookies = it
             }
