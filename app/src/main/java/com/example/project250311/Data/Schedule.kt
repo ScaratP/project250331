@@ -17,6 +17,10 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.time.LocalTime
+import androidx.room.TypeConverter
+import androidx.room.TypeConverters
+
 
 @Entity(tableName = "course_table")
 data class Schedule(
@@ -25,8 +29,8 @@ data class Schedule(
     val teacherName: String,
     val location: String,
     val weekDay: String,
-    val startTime: String,
-    val endTime: String
+    val startTime: LocalTime, // 改為 LocalTime
+    val endTime: LocalTime   // 改為 LocalTime
 )
 
 @Dao
@@ -44,7 +48,21 @@ interface CourseDao {
     suspend fun clearAllCourses()
 }
 
-@Database(entities = [Schedule::class], version = 1, exportSchema = false)
+
+class Converters {
+    @TypeConverter
+    fun fromLocalTime(time: LocalTime?): String? {
+        return time?.toString() // 例如 "09:10"
+    }
+
+    @TypeConverter
+    fun toLocalTime(timeString: String?): LocalTime? {
+        return timeString?.let { LocalTime.parse(it) }
+    }
+}
+
+@Database(entities = [Schedule::class], version = 2, exportSchema = false)
+@TypeConverters(Converters::class) // 註冊轉換器
 abstract class AppDatabase : RoomDatabase() {
     abstract fun courseDao(): CourseDao
 
@@ -58,7 +76,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "course_database"
-                ).fallbackToDestructiveMigration().build()
+                ).build()
                 INSTANCE = instance
                 instance
             }
@@ -76,6 +94,9 @@ class CourseRepository(private val courseDao: CourseDao) {
 class CourseViewModel(private val repository: CourseRepository) : ViewModel() {
     private val _allCourses = MutableLiveData<List<Schedule>>()
     val allCourses: LiveData<List<Schedule>> get() = _allCourses
+
+    private val _selectedCourses = MutableLiveData<List<Schedule>?>(null)
+    val selectedCourses: LiveData<List<Schedule>?> get() = _selectedCourses
 
     fun loadAllCourses() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -95,5 +116,9 @@ class CourseViewModel(private val repository: CourseRepository) : ViewModel() {
         viewModelScope.launch(Dispatchers.IO) {
             repository.clearAllCourses()
         }
+    }
+
+    fun selectCourses(courses: List<Schedule>?) {
+        _selectedCourses.value = courses
     }
 }
