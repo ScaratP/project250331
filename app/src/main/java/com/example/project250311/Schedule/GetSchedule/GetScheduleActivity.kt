@@ -44,7 +44,7 @@ import com.example.project250311.Data.CourseViewModel
 import com.example.project250311.Data.Schedule
 
 
-class MainActivity : ComponentActivity() {
+class GetScheduleActivity : ComponentActivity() {
     private val viewModel: CourseViewModel by viewModels {
         object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
