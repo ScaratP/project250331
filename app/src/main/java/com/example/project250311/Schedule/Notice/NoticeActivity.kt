@@ -164,5 +164,5 @@ fun WebViewScreen(url: String) {
         with(NotificationManagerCompat.from(context)) {
             notify(notificationId, builder.build())
         }
-    }
+    }  //
 }

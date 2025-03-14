@@ -42,9 +42,6 @@ interface CourseDao {
 
     @Query("DELETE FROM course_table")
     suspend fun clearAllCourses()
-
-    @Query("SELECT * FROM course_table WHERE weekDay = :weekDay")
-    fun getCourseByWeekDay(weekDay: String): LiveData<List<Schedule>>
 }
 
 @Database(entities = [Schedule::class], version = 1, exportSchema = false)
@@ -74,8 +71,6 @@ class CourseRepository(private val courseDao: CourseDao) {
     fun getCourseByTime(weekDay: String, startTime: String): LiveData<List<Schedule>> = courseDao.getCourseByTime(weekDay, startTime)
     suspend fun getAllCourses(): List<Schedule> = courseDao.getAllCourses()
     suspend fun clearAllCourses() = courseDao.clearAllCourses()
-    fun getCourseByWeekDay(weekDay: String): LiveData<List<Schedule>> =
-        courseDao.getCourseByWeekDay(weekDay)
 }
 
 class CourseViewModel(private val repository: CourseRepository) : ViewModel() {
@@ -100,9 +95,5 @@ class CourseViewModel(private val repository: CourseRepository) : ViewModel() {
         viewModelScope.launch(Dispatchers.IO) {
             repository.clearAllCourses()
         }
-    }
-
-    fun getCoursesForToday(weekDay: String): LiveData<List<Schedule>> {
-        return repository.getCourseByWeekDay(weekDay)
     }
 }
