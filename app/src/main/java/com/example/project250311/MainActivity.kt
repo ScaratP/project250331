@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.project250311.ui.theme.Project250311Theme
 import com.example.project250311.Schedule.GetSchedule.GetScheduleActivity
+import com.example.project250311.Schedule.Notice.NoticeActivity
 
 
 class MainActivity : ComponentActivity() {
@@ -49,8 +50,13 @@ fun MainScreen() {
         }) {
             Text(text = "Go to Get Schedule Activity")
         }
-//        Button(onClick = {
-//            val intent = Intent(context,)
-//        })
+        Button(onClick = {
+            // 創建 Intent 並啟動 SecondActivity
+            val intent = Intent(context, NoticeActivity::class.java)
+            context.startActivity(intent)
+        }) {
+            Text(text = "Go to Notice Activity")
+        }
+
     }
 }

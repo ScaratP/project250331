@@ -6,6 +6,7 @@ import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -25,6 +26,7 @@ import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -94,21 +96,20 @@ suspend fun fetchWebData(url: String, cookies: String?): List<Schedule> {
                 for ((colIndex, column) in columns.withIndex()) {
                     val span = column.selectFirst("span[title]")
                     val title = span?.attr("title")?.trim() ?: ""
-                    val realRowIndex = rowIndex
 
-                    if (realRowIndex >= startTimes.size) continue
+                    if (rowIndex >= startTimes.size) continue
 
                     val weekDay = if (colIndex in 1..7) weekDays[colIndex - 1] else "未知"
-                    val startTime = startTimes[realRowIndex] // 未調整的原始時間
-                    val endTime = endTimes[realRowIndex]
+                    val startTime = startTimes[rowIndex] // 未調整的原始時間
+                    val endTime = endTimes[rowIndex]
 
                     if (title.isNotEmpty()) {
                         val parsedData = parseTitle(title)
                         val courseSchedule = Schedule(
-                            id = "$colIndex$realRowIndex",
+                            id = "$colIndex$rowIndex",
                             courseName = parsedData["科目名稱"] ?: "未知課程",
                             teacherName = parsedData["授課教師"] ?: "未知教師",
-                            location = parsedData["場地"] ?: "未知地點",
+                            location = parsedData["場地"] ?: "其它",
                             weekDay = weekDay,
                             startTime = startTime,
                             endTime = endTime
@@ -222,30 +223,47 @@ fun WebViewScreen(url: String, onLoginSuccess: (String) -> Unit) {
 fun ScheduleScreen(viewModel: CourseViewModel) {
     var cookies by remember { mutableStateOf<String?>(null) }
     val scheduleList by viewModel.allCourses.observeAsState(emptyList())
-    val selectedCourses by viewModel.selectedCourses.observeAsState(null) // 從 ViewModel 獲取
+    val selectedCourses by viewModel.selectedCourses.observeAsState(null)
     var isLoading by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
-    LaunchedEffect(Unit) { viewModel.loadAllCourses() }
+    val onCourseSelected = remember(viewModel) {
+        { courses: List<Schedule>? -> viewModel.selectCourses(courses) }
+    }
+
+    // Refresh data when cookies are updated
     LaunchedEffect(cookies) {
-        if (cookies != null && scheduleList.isEmpty()) {
-            isLoading = true
+        if (cookies != null) {
+            isLoading = true // Start loading
             val fetchedData = fetchWebData(
                 "https://infosys.nttu.edu.tw/n_CourseBase_Select/WeekCourseList.aspx?ItemParam=",
                 cookies!!
             )
             if (fetchedData.isNotEmpty()) {
                 viewModel.clearAllCourses()
-                fetchedData.forEach { viewModel.insertCourse(it) }
+                Log.d("ScheduleScreen", "Cleared all courses")
+                fetchedData.forEach {
+                    viewModel.insertCourse(it)
+                    Log.d("ScheduleScreen", "Inserted course: $it")
+                }
+                viewModel.loadAllCourses() // Load new data
+            } else {
+                Log.d("ScheduleScreen", "No new data fetched, keeping existing data")
             }
-            isLoading = false
+            isLoading = false // Loading complete
         }
     }
 
+    // Load existing data on initial composition
+    LaunchedEffect(Unit) {
+        viewModel.loadAllCourses()
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
-        // 頂部標題和刷新按鈕
         Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -255,47 +273,50 @@ fun ScheduleScreen(viewModel: CourseViewModel) {
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             )
-            Button(
-                onClick = {
-                    cookies?.let { cookiesValue ->
-                        coroutineScope.launch {
-                            isLoading = true
-                            fetchNewData(viewModel, cookiesValue)
-                            isLoading = false
-                        }
-                    }
-                },
-                enabled = cookies != null,
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-            ) {
-                if (isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = MaterialTheme.colorScheme.onSecondary
-                    )
-                } else {
-                    Text("刷新")
-                }
-            }
         }
 
-        // 根據條件顯示 WebView 或表格
-        if (scheduleList.isEmpty() && cookies == null) {
-            WebViewScreen("https://infosys.nttu.edu.tw/InfoLoginNew.aspx") { cookies = it }
+        if (cookies == null) {
+            WebViewScreen("https://infosys.nttu.edu.tw/InfoLoginNew.aspx") { newCookies ->
+                cookies = newCookies
+            }
         } else {
-            ScheduleTable(
-                scheduleList = scheduleList,
-                onCourseSelected = { courses -> viewModel.selectCourses(courses) }
-            )
-            // 詳情卡片獨立顯示
-            selectedCourses?.let { courses ->
-                Spacer(modifier = Modifier.height(16.dp))
-                CourseDetailCard(courses = courses)
+            Column(modifier = Modifier.fillMaxSize()) {
+                if (isLoading) {
+                    // Show loading indicator
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                } else {
+                    // Show schedule table
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    ) {
+                        Log.d("test", "$scheduleList")
+                        ScheduleTable(
+                            scheduleList = scheduleList,
+                            onCourseSelected = onCourseSelected
+                        )
+                    }
+                    selectedCourses?.let { courses ->
+                        Spacer(modifier = Modifier.height(16.dp))
+                        CourseDetailCard(
+                            courses = courses,
+                            viewModel = viewModel,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .wrapContentHeight()
+                        )
+                    }
+                }
             }
         }
     }
 }
-
 @Composable
 fun ScheduleTable(
     scheduleList: List<Schedule>,
@@ -347,7 +368,9 @@ fun ScheduleTable(
                         shadowElevation = 4.dp
                     ) {
                         Column {
-                            Row(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                            Row(modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp)) {
                                 Text(
                                     text = "",
                                     fontSize = 14.sp,
@@ -368,32 +391,34 @@ fun ScheduleTable(
                                 }
                             }
 
-                            activeRows.forEach { realRowIndex ->
+                            activeRows.forEach { rowIndex ->
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .background(
-                                            if (activeRows.indexOf(realRowIndex) % 2 == 0) MaterialTheme.colorScheme.surface
+                                            if (activeRows.indexOf(rowIndex) % 2 == 0) MaterialTheme.colorScheme.surface
                                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                                         )
                                 ) {
                                     Text(
-                                        text = "第${realRowIndex}節",
+                                        text = "第${rowIndex}節",
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.weight(1f).padding(8.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(8.dp),
                                         textAlign = TextAlign.Center
                                     )
 
                                     activeCols.forEach { colIndex ->
-                                        val slotStart = timeSlots[realRowIndex].first
-                                        val slotEnd = timeSlots[realRowIndex].second
+                                        val slotStart = timeSlots[rowIndex].first
+                                        val slotEnd = timeSlots[rowIndex].second
                                         val weekDay = weekDays[colIndex - 1]
                                         val courseAtSlot = scheduleList.firstOrNull { course ->
                                             val matches = course.weekDay == weekDay &&
                                                     course.startTime < slotEnd && course.endTime > slotStart
-                                            Log.d("ScheduleScreen", "col=$colIndex, row=$realRowIndex, course=${course.courseName}, matches=$matches")
+                                            Log.d("ScheduleScreen", "col=$colIndex, row=$rowIndex, course=${course.courseName}, matches=$matches")
                                             matches
                                         }
                                         Box(
@@ -408,15 +433,18 @@ fun ScheduleTable(
                                                 )
                                                 .clickable(enabled = courseAtSlot != null) {
                                                     courseAtSlot?.let {
-                                                        val relatedCourses = scheduleList.filter { course ->
-                                                            course.courseName == it.courseName
-                                                        }
+                                                        val relatedCourses =
+                                                            scheduleList.filter { course ->
+                                                                course.courseName == it.courseName
+                                                            }
                                                         onCourseSelected(relatedCourses)
                                                     }
                                                 }
                                                 .border(
                                                     width = 0.5.dp,
-                                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                                                    color = MaterialTheme.colorScheme.outline.copy(
+                                                        alpha = 0.3f
+                                                    ),
                                                     shape = RoundedCornerShape(4.dp)
                                                 ),
                                             contentAlignment = Alignment.Center
@@ -441,17 +469,29 @@ fun ScheduleTable(
     }
 }
 
-
-
-
 @Composable
-fun CourseDetailCard(courses: List<Schedule>) {
+fun CourseDetailCard(
+    courses: List<Schedule>,
+    viewModel: CourseViewModel,
+    modifier: Modifier = Modifier // 添加 modifier 參數
+) {
     if (courses.isEmpty()) return
 
+    val context = LocalContext.current
+    var showEditDialog by remember { mutableStateOf(false) }
+    var newLocation by remember { mutableStateOf("") }
+
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = modifier
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .clickable {
+                if (courses.any { it.location == "其它" }) {
+                    showEditDialog = true
+                } else {
+                    Toast.makeText(context, "只有地點為「其它」的課程可以編輯", Toast.LENGTH_SHORT)
+                        .show()
+                }
+            },
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
@@ -491,7 +531,43 @@ fun CourseDetailCard(courses: List<Schedule>) {
             }
         }
     }
+
+    if (showEditDialog) {
+        AlertDialog(
+            onDismissRequest = { showEditDialog = false },
+            title = { Text("編輯地點") },
+            text = {
+                TextField(
+                    value = newLocation,
+                    onValueChange = { newLocation = it },
+                    label = { Text("輸入新地點") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newLocation.isNotBlank()) {
+                            courses.filter { it.location == "其它" }.forEach { course ->
+                                viewModel.updateCourseLocation(course.id, newLocation)
+                            }
+                            showEditDialog = false
+                            newLocation = ""
+                        }
+                    }
+                ) {
+                    Text("確定")
+                }
+            },
+            dismissButton = {
+                Button(onClick = { showEditDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 }
+
 
 suspend fun fetchNewData(viewModel: CourseViewModel, cookies: String) {
     val fetchedData = fetchWebData(
@@ -504,3 +580,4 @@ suspend fun fetchNewData(viewModel: CourseViewModel, cookies: String) {
         viewModel.loadAllCourses()
     }
 }
+

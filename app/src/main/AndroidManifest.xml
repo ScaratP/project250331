@@ -24,6 +24,7 @@
             </intent-filter>
         </activity>
         <activity android:name=".Schedule.GetSchedule.GetScheduleActivity"/>
+        <activity android:name=".Schedule.Notice.NoticeActivity"/>
     </application>
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />

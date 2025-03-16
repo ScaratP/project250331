@@ -22,7 +22,7 @@ import kotlinx.coroutines.launch
 import java.time.LocalTime
 
 @Entity(tableName = "course_table")
-data class CourseEntity(
+data class Schedule(
     @PrimaryKey val id: String,
     val courseName: String,
     val teacherName: String,
@@ -36,13 +36,13 @@ data class CourseEntity(
 @Dao
 interface CourseDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insert(course: CourseEntity)
+    suspend fun insert(course: Schedule)
 
     @Query("SELECT * FROM course_table WHERE weekDay = :weekDay AND startTime = :startTime")
-    fun getCourseByTime(weekDay: String, startTime: String): LiveData<List<CourseEntity>>
+    fun getCourseByTime(weekDay: String, startTime: String): LiveData<List<Schedule>>
 
     @Query("SELECT * FROM course_table")
-    suspend fun getAllCourses(): List<CourseEntity>
+    suspend fun getAllCourses(): List<Schedule>
 
     @Query("DELETE FROM course_table")
     suspend fun clearAllCourses()
@@ -61,7 +61,7 @@ class Converters {
     }
 }
 
-@Database(entities = [CourseEntity::class], version = 2, exportSchema = false)
+@Database(entities = [Schedule::class], version = 2, exportSchema = false)
 @TypeConverters(Converters::class) // 註冊轉換器
 abstract class AppDatabase : RoomDatabase() {
     abstract fun courseDao(): CourseDao
@@ -85,27 +85,28 @@ abstract class AppDatabase : RoomDatabase() {
 }
 
 class CourseRepository(private val courseDao: CourseDao) {
-    suspend fun insert(course: CourseEntity) = courseDao.insert(course)
-    fun getCourseByTime(weekDay: String, startTime: String): LiveData<List<CourseEntity>> = courseDao.getCourseByTime(weekDay, startTime)
-    suspend fun getAllCourses(): List<CourseEntity> = courseDao.getAllCourses()
+    suspend fun insert(course: Schedule) = courseDao.insert(course)
+    fun getCourseByTime(weekDay: String, startTime: String): LiveData<List<Schedule>> = courseDao.getCourseByTime(weekDay, startTime)
+    suspend fun getAllCourses(): List<Schedule> = courseDao.getAllCourses()
     suspend fun clearAllCourses() = courseDao.clearAllCourses()
 }
 
 class CourseViewModel(private val repository: CourseRepository) : ViewModel() {
-    private val _allCourses = MutableLiveData<List<CourseEntity>>()
-    val allCourses: LiveData<List<CourseEntity>> get() = _allCourses
+    private val _allCourses = MutableLiveData<List<Schedule>>()
+    val allCourses: LiveData<List<Schedule>> get() = _allCourses
 
-    private val _selectedCourses = MutableLiveData<List<CourseEntity>?>(null)
-    val selectedCourses: LiveData<List<CourseEntity>?> get() = _selectedCourses
+    private val _selectedCourses = MutableLiveData<List<Schedule>?>(null)
+    val selectedCourses: LiveData<List<Schedule>?> get() = _selectedCourses
 
     fun loadAllCourses() {
         viewModelScope.launch(Dispatchers.IO) {
             val courses = repository.getAllCourses()
+            Log.d("allcourses", "$courses")
             _allCourses.postValue(courses)
         }
     }
 
-    fun insertCourse(course: CourseEntity) {
+    fun insertCourse(course: Schedule) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.insert(course)
             Log.d("DatabaseCheck", "Inserted Course: $course")
@@ -115,10 +116,33 @@ class CourseViewModel(private val repository: CourseRepository) : ViewModel() {
     fun clearAllCourses() {
         viewModelScope.launch(Dispatchers.IO) {
             repository.clearAllCourses()
+            val courses = repository.getAllCourses()
+            Log.d("clear", "$courses")
         }
     }
 
-    fun selectCourses(courses: List<CourseEntity>?) {
+    fun selectCourses(courses: List<Schedule>?) {
         _selectedCourses.value = courses
+    }
+
+    fun updateCourseLocation(courseId: String, newLocation: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val currentCourses = _allCourses.value?.toMutableList() ?: mutableListOf()
+            val courseToUpdate = currentCourses.find { it.id == courseId }
+            courseToUpdate?.let {
+                val updatedCourse = it.copy(location = newLocation)
+                repository.insert(updatedCourse)
+                val updatedCourses = currentCourses.map { course ->
+                    if (course.id == courseId) updatedCourse else course
+                }
+                _allCourses.postValue(updatedCourses)
+                _selectedCourses.value?.let { selected ->
+                    val updatedSelected = selected.map { course ->
+                        if (course.id == courseId) updatedCourse else course
+                    }
+                    _selectedCourses.postValue(updatedSelected)
+                }
+            }
+        }
     }
 }
