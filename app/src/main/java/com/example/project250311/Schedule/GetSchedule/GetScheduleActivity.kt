@@ -253,80 +253,90 @@ fun ScheduleScreen(viewModel: CourseViewModel) {
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "課程表",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
 
-            Row {
-                Button(
-                    onClick = {
-                        coroutineScope.launch {
-                            isLoading = true
-                            cookies = null // 觸發重新登入並強制抓取
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets.systemBars // 確保內容不會被系統列遮擋
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues) // 應用內邊距以適應系統列.fillMaxSize())
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "課程表",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Row {
+                    Button(
+                        onClick = {
+                            coroutineScope.launch {
+                                isLoading = true
+                                cookies = null // 觸發重新登入並強制抓取
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                        modifier = Modifier.padding(end = 8.dp)
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                color = MaterialTheme.colorScheme.onSecondary
+                            )
+                        } else {
+                            Text("刷新")
                         }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
-                    modifier = Modifier.padding(end = 8.dp)
-                ) {
-                    if (isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            color = MaterialTheme.colorScheme.onSecondary
-                        )
-                    } else {
-                        Text("刷新")
+                    }
+
+                    Button(
+                        onClick = {
+                            val intent = Intent(context, MainActivity::class.java)
+                            context.startActivity(intent)
+                            (context as? Activity)?.finish()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                    ) {
+                        Text("返回")
                     }
                 }
-
-                Button(
-                    onClick = {
-                        val intent = Intent(context, MainActivity::class.java)
-                        context.startActivity(intent)
-                        (context as? Activity)?.finish()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-                ) {
-                    Text("返回")
-                }
             }
-        }
 
-        if (cookies == null) {
-            WebViewScreen("https://infosys.nttu.edu.tw/InfoLoginNew.aspx") { newCookies ->
-                cookies = newCookies
-            }
-        } else {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                ) {
-                    ScheduleTable(
-                        scheduleList = scheduleList,
-                        onCourseSelected = onCourseSelected
-                    )
+            if (cookies == null) {
+                WebViewScreen("https://infosys.nttu.edu.tw/InfoLoginNew.aspx") { newCookies ->
+                    cookies = newCookies
                 }
-                selectedCourses?.let { courses ->
-                    Spacer(modifier = Modifier.height(16.dp))
-                    CourseDetailCard(
-                        courses = courses,
-                        viewModel = viewModel,
+            } else {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Box(
                         modifier = Modifier
+                            .weight(1f)
                             .fillMaxWidth()
-                            .wrapContentHeight()
-                    )
+                    ) {
+                        ScheduleTable(
+                            scheduleList = scheduleList,
+                            onCourseSelected = onCourseSelected
+                        )
+                    }
+                    selectedCourses?.let { courses ->
+                        Spacer(modifier = Modifier.height(16.dp))
+                        CourseDetailCard(
+                            courses = courses,
+                            viewModel = viewModel,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .wrapContentHeight()
+                        )
+                    }
                 }
             }
         }
@@ -419,16 +429,26 @@ fun ScheduleTable(
                                                 MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                                         )
                                 ) {
-                                    Text(
-                                        text = "第${rowIndex}節",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = MaterialTheme.colorScheme.onSurface,
+                                    Column(
                                         modifier = Modifier
                                             .weight(1f)
                                             .padding(8.dp),
-                                        textAlign = TextAlign.Center
-                                    )
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text(
+                                            text = "第${rowIndex}節",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            textAlign = TextAlign.Center
+                                        )
+                                        Text(
+                                            text = "${timeSlots[rowIndex].first.toString().substring(0, 5)}-${timeSlots[rowIndex].second.toString().substring(0, 5)}",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
                                     activeCols.forEach { colIndex ->
                                         val slotStart = timeSlots[rowIndex].first
                                         val slotEnd = timeSlots[rowIndex].second
