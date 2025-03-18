@@ -45,21 +45,18 @@ fun MainScreen() {
         verticalArrangement = Arrangement.Center
     ) {
         Button(onClick = {
-            // 創建 Intent 並啟動 SecondActivity
             val intent = Intent(context, GetScheduleActivity::class.java)
             context.startActivity(intent)
         }) {
             Text(text = "Go to Get Schedule Activity")
         }
         Button(onClick = {
-            // 創建 Intent 並啟動 SecondActivity
             val intent = Intent(context, NoticeActivity::class.java)
             context.startActivity(intent)
         }) {
             Text(text = "Go to Notice Activity")
         }
         Button(onClick = {
-            // 創建 Intent 並啟動 SecondActivity
             val intent = Intent(context, GetLeaveDataActivity ::class.java)
             context.startActivity(intent)
         }) {

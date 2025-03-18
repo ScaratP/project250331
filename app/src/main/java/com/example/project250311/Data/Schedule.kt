@@ -18,7 +18,9 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalTime
 
 @Entity(tableName = "course_table")
@@ -28,10 +30,9 @@ data class Schedule(
     val teacherName: String,
     val location: String,
     val weekDay: String,
-    val startTime: LocalTime, // 改為 LocalTime
-    val endTime: LocalTime   // 改為 LocalTime
+    val startTime: LocalTime,
+    val endTime: LocalTime
 )
-
 
 @Dao
 interface CourseDao {
@@ -48,7 +49,6 @@ interface CourseDao {
     suspend fun clearAllCourses()
 }
 
-
 class Converters {
     @TypeConverter
     fun fromLocalTime(time: LocalTime?): String? {
@@ -62,7 +62,7 @@ class Converters {
 }
 
 @Database(entities = [Schedule::class], version = 2, exportSchema = false)
-@TypeConverters(Converters::class) // 註冊轉換器
+@TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun courseDao(): CourseDao
 
@@ -86,7 +86,8 @@ abstract class AppDatabase : RoomDatabase() {
 
 class CourseRepository(private val courseDao: CourseDao) {
     suspend fun insert(course: Schedule) = courseDao.insert(course)
-    fun getCourseByTime(weekDay: String, startTime: String): LiveData<List<Schedule>> = courseDao.getCourseByTime(weekDay, startTime)
+    fun getCourseByTime(weekDay: String, startTime: String): LiveData<List<Schedule>> =
+        courseDao.getCourseByTime(weekDay, startTime)
     suspend fun getAllCourses(): List<Schedule> = courseDao.getAllCourses()
     suspend fun clearAllCourses() = courseDao.clearAllCourses()
 }
@@ -98,26 +99,28 @@ class CourseViewModel(private val repository: CourseRepository) : ViewModel() {
     private val _selectedCourses = MutableLiveData<List<Schedule>?>(null)
     val selectedCourses: LiveData<List<Schedule>?> get() = _selectedCourses
 
-    fun loadAllCourses() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val courses = repository.getAllCourses()
-            Log.d("allcourses", "$courses")
-            _allCourses.postValue(courses)
+    // 改為 suspend 函式直接回傳 Boolean
+    suspend fun loadAllCourses(): Boolean = withContext(Dispatchers.IO) {
+        val courses = repository.getAllCourses()
+        Log.d("CourseViewModel", "Loaded courses: $courses")
+        withContext(Dispatchers.Main) {
+            _allCourses.value = courses
         }
+        courses.isNotEmpty()
     }
 
-    fun insertCourse(course: Schedule) {
-        viewModelScope.launch(Dispatchers.IO) {
+    fun insertCourse(course: Schedule): Job {
+        return viewModelScope.launch(Dispatchers.IO) {
             repository.insert(course)
             Log.d("DatabaseCheck", "Inserted Course: $course")
         }
     }
 
-    fun clearAllCourses() {
-        viewModelScope.launch(Dispatchers.IO) {
+    fun clearAllCourses(): Job {
+        return viewModelScope.launch(Dispatchers.IO) {
             repository.clearAllCourses()
-            val courses = repository.getAllCourses()
-            Log.d("clear", "$courses")
+            _allCourses.postValue(emptyList())
+            Log.d("CourseViewModel", "Cleared all courses")
         }
     }
 
@@ -125,24 +128,33 @@ class CourseViewModel(private val repository: CourseRepository) : ViewModel() {
         _selectedCourses.value = courses
     }
 
-    fun updateCourseLocation(courseId: String, newLocation: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val currentCourses = _allCourses.value?.toMutableList() ?: mutableListOf()
+    fun updateCourseLocation(courseId: String, newLocation: String): Job {
+        return viewModelScope.launch {
+            // 取得目前的課程資料，請在 Main 執行緒中讀取 LiveData
+            val currentCourses = withContext(Dispatchers.Main) {
+                _allCourses.value?.toMutableList() ?: mutableListOf()
+            }
             val courseToUpdate = currentCourses.find { it.id == courseId }
             courseToUpdate?.let {
                 val updatedCourse = it.copy(location = newLocation)
-                repository.insert(updatedCourse)
+                // 只在 IO 執行緒中執行一次資料庫插入操作
+                withContext(Dispatchers.IO) {
+                    repository.insert(updatedCourse)
+                }
+                // 更新 LiveData 值請在 Main 執行緒中進行
                 val updatedCourses = currentCourses.map { course ->
                     if (course.id == courseId) updatedCourse else course
                 }
-                _allCourses.postValue(updatedCourses)
+                _allCourses.value = updatedCourses
+
                 _selectedCourses.value?.let { selected ->
                     val updatedSelected = selected.map { course ->
                         if (course.id == courseId) updatedCourse else course
                     }
-                    _selectedCourses.postValue(updatedSelected)
+                    _selectedCourses.value = updatedSelected
                 }
             }
         }
     }
+
 }
