@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.project250311.ui.theme.Project250311Theme
 import com.example.project250311.Schedule.GetSchedule.GetScheduleActivity
+import com.example.project250311.Schedule.NoSchool.GetLeaveDataActivity
 import com.example.project250311.Schedule.Notice.NoticeActivity
 
 
@@ -56,6 +57,13 @@ fun MainScreen() {
             context.startActivity(intent)
         }) {
             Text(text = "Go to Notice Activity")
+        }
+        Button(onClick = {
+            // 創建 Intent 並啟動 SecondActivity
+            val intent = Intent(context, GetLeaveDataActivity ::class.java)
+            context.startActivity(intent)
+        }) {
+            Text(text = "Go to Leave Activity")
         }
 
     }
