@@ -4,30 +4,30 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.Text
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Note
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.example.project250311.ui.theme.Project250311Theme
 import com.example.project250311.Schedule.GetSchedule.GetScheduleActivity
 import com.example.project250311.Schedule.NoSchool.GetLeaveDataActivity
+import com.example.project250311.Schedule.Note.NoteActivity
+import com.example.project250311.Schedule.Note.NoteListActivity
 import com.example.project250311.Schedule.Notice.NoticeActivity
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-
-import androidx.compose.material3.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CalendarToday
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.ExitToApp
-import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.foundation.shape.RoundedCornerShape
-import android.widget.Toast
+import com.example.project250311.ui.theme.Project250311Theme
 
 class MainActivity : ComponentActivity() {
 
@@ -80,7 +80,7 @@ fun MainScreen() {
                 )
             }
 
-            // 下半部兩個按鈕
+            // 下半部三個按鈕
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -96,11 +96,18 @@ fun MainScreen() {
                     modifier = Modifier.weight(1f)
                 )
                 MenuButton(
+                    text = "Notes",
+                    icon = Icons.Default.Note,
+                    onClick = {
+                        context.startActivity(Intent(context, NoteListActivity::class.java))
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+                MenuButton(
                     text = "More",
                     icon = Icons.Default.MoreHoriz,
                     onClick = {
-                        // 可以添加未來功能的跳轉
-                        Toast.makeText(context, "Coming Soon!", Toast.LENGTH_SHORT).show()
+                        context.startActivity(Intent(context, NoteActivity::class.java))
                     },
                     modifier = Modifier.weight(1f)
                 )
