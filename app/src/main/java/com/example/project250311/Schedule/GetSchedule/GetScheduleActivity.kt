@@ -58,6 +58,7 @@ import kotlinx.coroutines.launch
 import org.jsoup.Jsoup
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import java.util.Calendar
 
 class GetScheduleActivity : ComponentActivity() {
@@ -535,108 +536,44 @@ fun CourseDetailCard(
 
     var showEditDialog by remember { mutableStateOf(false) }
     var newLocation by remember { mutableStateOf("") }
-    var isNotificationEnabled by remember { mutableStateOf(false) } //控制通知開關
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-
-    LaunchedEffect(isNotificationEnabled) {
-        courses.forEach { course ->
-            val startTime = course.startTime
-            val alarmTime = startTime.minusMinutes(10)//前十分鐘
-
-            if (isNotificationEnabled) {
-                setNoticationAlarm(context, alarmTime, course)
-            } else {
-                cancelNotificatuon(context, course)
-            }
-        }
-    }
-
-//        courses.forEach{ course ->
-//            val startTime = course.startTime
-//            val alarmTime = startTime.minusMinutes(10)//前十分鐘
-//
-//            if (isNotificationEnabled){
-//                setNoticationAlarm(LocalContext.current,alarmTime,course)
-//            }else{
-//                cancelNotificatuon(LocalContext.current,course)
-//            }
-//        }
-
-
 
     Card(
         modifier = modifier
             .padding(horizontal = 16.dp, vertical = 8.dp)
-            .clickable {
-                showEditDialog = true
-            },
+            .clickable { showEditDialog = true },
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth() // 讓 Box 佔滿整個寬度
-                .padding(16.dp)
-        ) {
-            Column(modifier = Modifier.padding(end = 40.dp)) {
-                Text(
-                    text = "課程: ${courses.first().courseName}",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "老師: ${courses.map { it.teacherName }.distinct().joinToString(", ")}",
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = "地點: ${courses.map { it.location }.distinct().joinToString(", ")}",
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "時間安排:",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                courses.forEach { course ->
-                    Text(
-                        text = "${course.weekDay} ${
-                            course.startTime.format(
-                                java.time.format.DateTimeFormatter.ofPattern(
-                                    "HH:mm"
-                                )
-                            )
-                        } - ${course.endTime.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 16.dp, top = 4.dp)
-                    )
-                }
-            }
-
-            Switch(
-                checked = isNotificationEnabled,
-                onCheckedChange = { isEnabled ->
-                    isNotificationEnabled = isEnabled
-                    if (isEnabled) {
-                        courses.forEach { course ->
-                            sendNotification(context,course)
-                        }
-                    } else {
-                        courses.forEach { course ->
-                            cancelNotificatuon(context, course)
-                        }
-                    }
-                },
-                modifier = Modifier.align(Alignment.TopEnd)
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "課程: ${courses.first().courseName}",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
             )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "老師: ${courses.map { it.teacherName }.distinct().joinToString(", ")}",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "地點: ${courses.map { it.location }.distinct().joinToString(", ")}",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "時間安排:",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            courses.forEach { course ->
+                CourseItem(course = course)
+            }
         }
     }
 
@@ -657,7 +594,6 @@ fun CourseDetailCard(
                     onClick = {
                         if (newLocation.isNotBlank()) {
                             val updatedLocation = newLocation
-                            // 依次更新各筆課程，使用 suspend 函式更新
                             scope.launch {
                                 courses.forEach { course ->
                                     viewModel.updateCourseLocation(course.id, updatedLocation)
@@ -679,6 +615,45 @@ fun CourseDetailCard(
         )
     }
 }
+
+@Composable
+fun CourseItem(course: Schedule) {
+    val context = LocalContext.current
+    val notificationStates = remember { mutableStateMapOf<String, Boolean>() }
+    val isNotificationEnabled = notificationStates[course.id] ?: false
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "${course.weekDay} ${
+                    course.startTime.format(DateTimeFormatter.ofPattern("HH:mm"))
+                } - ${course.endTime.format(DateTimeFormatter.ofPattern("HH:mm"))}",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Switch(
+            checked = isNotificationEnabled,
+            onCheckedChange = { isEnabled ->
+                notificationStates[course.id] = isEnabled
+                if (isEnabled) {
+                    val alarmTime = course.startTime.minusMinutes(10) // 提前 10 分鐘通知
+                    setNoticationAlarm(context, alarmTime, course)
+                    sendNotification(context, course)
+                } else {
+                    cancelNotificatuon(context, course)
+                }
+            }
+        )
+    }
+}
+
 
 fun setNoticationAlarm(context: Context, alamTime: LocalTime, course:Schedule){
 
@@ -711,7 +686,6 @@ fun cancelNotificatuon(context: Context,course: Schedule){
 }
 
 
-//@Composable
 fun sendNotification(context: Context, course: Schedule) {
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
