@@ -2,7 +2,14 @@ package com.example.project250311.Schedule.GetSchedule
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlarmManager
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.webkit.CookieManager
@@ -17,6 +24,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
@@ -30,6 +40,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.example.project250311.Data.AppDatabase
@@ -37,11 +50,15 @@ import com.example.project250311.Data.CourseRepository
 import com.example.project250311.Data.CourseViewModel
 import com.example.project250311.Data.Schedule
 import com.example.project250311.MainActivity
+import com.example.project250311.Schedule.NoSchool.GetLeaveDataActivity
+import com.example.project250311.Schedule.Notice.NoticeActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import org.jsoup.Jsoup
+import java.time.LocalDateTime
 import java.time.LocalTime
+import java.util.Calendar
 
 class GetScheduleActivity : ComponentActivity() {
     private val viewModel: CourseViewModel by viewModels {
@@ -518,7 +535,35 @@ fun CourseDetailCard(
 
     var showEditDialog by remember { mutableStateOf(false) }
     var newLocation by remember { mutableStateOf("") }
+    var isNotificationEnabled by remember { mutableStateOf(false) } //控制通知開關
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    LaunchedEffect(isNotificationEnabled) {
+        courses.forEach { course ->
+            val startTime = course.startTime
+            val alarmTime = startTime.minusMinutes(10)//前十分鐘
+
+            if (isNotificationEnabled) {
+                setNoticationAlarm(context, alarmTime, course)
+            } else {
+                cancelNotificatuon(context, course)
+            }
+        }
+    }
+
+//        courses.forEach{ course ->
+//            val startTime = course.startTime
+//            val alarmTime = startTime.minusMinutes(10)//前十分鐘
+//
+//            if (isNotificationEnabled){
+//                setNoticationAlarm(LocalContext.current,alarmTime,course)
+//            }else{
+//                cancelNotificatuon(LocalContext.current,course)
+//            }
+//        }
+
+
 
     Card(
         modifier = modifier
@@ -530,39 +575,68 @@ fun CourseDetailCard(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "課程: ${courses.first().courseName}",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "老師: ${courses.map { it.teacherName }.distinct().joinToString(", ")}",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = "地點: ${courses.map { it.location }.distinct().joinToString(", ")}",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "時間安排:",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            courses.forEach { course ->
+        Box(
+            modifier = Modifier
+                .fillMaxWidth() // 讓 Box 佔滿整個寬度
+                .padding(16.dp)
+        ) {
+            Column(modifier = Modifier.padding(end = 40.dp)) {
                 Text(
-                    text = "${course.weekDay} ${course.startTime.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))} - ${course.endTime.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}",
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                    text = "課程: ${courses.first().courseName}",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "老師: ${courses.map { it.teacherName }.distinct().joinToString(", ")}",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "地點: ${courses.map { it.location }.distinct().joinToString(", ")}",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "時間安排:",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                courses.forEach { course ->
+                    Text(
+                        text = "${course.weekDay} ${
+                            course.startTime.format(
+                                java.time.format.DateTimeFormatter.ofPattern(
+                                    "HH:mm"
+                                )
+                            )
+                        } - ${course.endTime.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                    )
+                }
             }
+
+            Switch(
+                checked = isNotificationEnabled,
+                onCheckedChange = { isEnabled ->
+                    isNotificationEnabled = isEnabled
+                    if (isEnabled) {
+                        courses.forEach { course ->
+                            sendNotification(context,course)
+                        }
+                    } else {
+                        courses.forEach { course ->
+                            cancelNotificatuon(context, course)
+                        }
+                    }
+                },
+                modifier = Modifier.align(Alignment.TopEnd)
+            )
         }
     }
 
@@ -603,6 +677,85 @@ fun CourseDetailCard(
                 }
             }
         )
+    }
+}
+
+fun setNoticationAlarm(context: Context, alamTime: LocalTime, course:Schedule){
+
+    val  alamCalendar = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY,alamTime.hour)
+        set(Calendar.MINUTE,alamTime.minute)
+        set(Calendar.SECOND,0)
+        set(Calendar.MILLISECOND,0)
+    }
+
+    val intent = Intent(context,NoticeActivity::class.java).apply {
+        putExtra("course_name",course.courseName)
+        putExtra("location",course.location)
+        putExtra("start_time",course.startTime.toString())
+    }
+
+    val pendingIntent = PendingIntent.getActivity(
+        context,course.id.hashCode(),intent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    alarmManager.setExact(AlarmManager.RTC_WAKEUP,alamCalendar.timeInMillis,pendingIntent)
+}
+
+fun cancelNotificatuon(context: Context,course: Schedule){
+    val notificationId = course.id.hashCode()
+
+    val notificationManager = NotificationManagerCompat.from(context)
+    notificationManager.cancel(notificationId)
+}
+
+
+//@Composable
+fun sendNotification(context: Context, course: Schedule) {
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        if (ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+    }
+
+    val channelId = "notify_id"
+    val notificationId = System.currentTimeMillis().toInt() //確保通知ID唯一
+
+
+    //查看課表
+    val url1 = "https://www.notion.so/115-14b63e698496818bb669f9073a87823f"
+    val scheduleIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url1))
+
+    val schedulePendingIntent = PendingIntent.getActivity( //點擊開啟
+        context,0,scheduleIntent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    //開起請假系統
+    val leaveIntent = Intent(context, GetLeaveDataActivity::class.java).apply {
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+    }
+    val leavePendingIntent = PendingIntent.getActivity(
+        context, 0, leaveIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    //建立通知
+    val builder = NotificationCompat.Builder(context, channelId)
+        .setSmallIcon(android.R.drawable.ic_dialog_email)
+        .setContentTitle("通知提醒!!")
+        .setContentText("課程: ${course.courseName}\n老師:${course.teacherName}\n地點:${course.location}\n時間:${course.startTime}~${course.endTime}")
+        .setPriority(NotificationCompat.PRIORITY_HIGH)
+        .setAutoCancel(true)
+        .addAction(android.R.drawable.ic_menu_agenda,"查看課表",schedulePendingIntent)
+        .addAction(android.R.drawable.ic_menu_view,"請假系統",leavePendingIntent)
+
+    with(NotificationManagerCompat.from(context)) {
+        notify(notificationId, builder.build())
     }
 }
 
