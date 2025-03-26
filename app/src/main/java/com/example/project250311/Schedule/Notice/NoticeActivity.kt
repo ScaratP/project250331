@@ -32,6 +32,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.example.project250311.Data.Schedule
 import com.example.project250311.Schedule.GetSchedule.GetScheduleActivity
+import com.example.project250311.Schedule.NoSchool.GetLeaveDataActivity
 import com.example.project250311.ui.theme.Project250311Theme
 
 class NoticeActivity: ComponentActivity() {
@@ -40,6 +41,7 @@ class NoticeActivity: ComponentActivity() {
         enableEdgeToEdge()
         createNotificationChannel() //建立通知頻道
         requestNotificationPermission()
+
         setContent {
             Project250311Theme {
                 Surface(
@@ -88,6 +90,8 @@ class NoticeActivity: ComponentActivity() {
 
 }
 
+
+
 @Composable
 fun NotificationButton(){
     val context = LocalContext.current //取得context
@@ -97,7 +101,7 @@ fun NotificationButton(){
         color = MaterialTheme.colorScheme.background
     ){
         Column {
-            WebViewScreen(url = "https://google.com")
+            //WebViewScreen(url = "https://google.com")
 
             Button(
                 onClick = { sendNotification(context) }
@@ -110,7 +114,7 @@ fun NotificationButton(){
 }
 
 //這個可以顯示&登入
-@Composable
+/*@Composable
 fun WebViewScreen(url: String) {
     AndroidView(factory = { context ->
         WebView(context).apply {
@@ -118,7 +122,7 @@ fun WebViewScreen(url: String) {
             loadUrl(url)
         }
     })
-}
+}*/
 
 
     fun sendNotification(context: Context) {
@@ -136,6 +140,7 @@ fun WebViewScreen(url: String) {
         val channelId = "notify_id"
         val notificationId = System.currentTimeMillis().toInt() //確保通知ID唯一
 
+
         //查看課表
         val url1 = "https://www.notion.so/115-14b63e698496818bb669f9073a87823f"
         val scheduleIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url1))
@@ -145,10 +150,11 @@ fun WebViewScreen(url: String) {
         )
 
         //開起請假系統
-        val url2 = "https://casauth.nttu.edu.tw/cas/login?service=https%3a%2f%2faskleave.nttu.edu.tw%2findex.aspx"
-        val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url2))
-        val webPendingIntent = PendingIntent.getActivity(
-            context,0,webIntent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        val leaveIntent = Intent(context,GetLeaveDataActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val leavePendingIntent = PendingIntent.getActivity(
+            context, 0, leaveIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         //建立通知
@@ -159,7 +165,7 @@ fun WebViewScreen(url: String) {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .addAction(android.R.drawable.ic_menu_agenda,"查看課表",schedulePendingIntent)
-            .addAction(android.R.drawable.ic_menu_view,"請假系統",webPendingIntent)
+            .addAction(android.R.drawable.ic_menu_view,"請假系統",leavePendingIntent)
 
         with(NotificationManagerCompat.from(context)) {
             notify(notificationId, builder.build())
