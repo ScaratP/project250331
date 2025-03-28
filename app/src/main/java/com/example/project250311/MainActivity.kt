@@ -24,6 +24,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.project250311.Schedule.GetSchedule.GetScheduleActivity
 import com.example.project250311.Schedule.NoSchool.GetLeaveDataActivity
+import com.example.project250311.Schedule.NoSchool.LeaveActivity
 //import com.example.project250311.Schedule.Note.NoteActivity
 //import com.example.project250311.Schedule.Note.NoteListActivity
 import com.example.project250311.Schedule.Notice.NoticeActivity
@@ -91,7 +92,7 @@ fun MainScreen() {
                     text = "Leave",
                     icon = Icons.Default.ExitToApp,
                     onClick = {
-                        context.startActivity(Intent(context, GetLeaveDataActivity::class.java))
+                        context.startActivity(Intent(context, LeaveActivity::class.java))
                     },
                     modifier = Modifier.weight(1f)
                 )

@@ -13,6 +13,8 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
@@ -42,11 +44,10 @@ class GetLeaveDataActivity : ComponentActivity() {
             }
         }
     }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            LeaveScreen(viewModel,this)
+            LeaveScreen(viewModel, this)
         }
     }
 }
@@ -70,7 +71,12 @@ suspend fun fetchLeaveData(url: String, cookies: String?): List<LeaveData> {
                     val courseName = row.select("td[data-label='課目名稱：']").text()
                     val hours = row.select("input[type='radio'][checked]").attr("value").toInt()
 
-                    leaveDataList.add(LeaveData(leave_type = leaveType, date_leave = date, courseName = courseName, hours = hours))
+                    leaveDataList.add(LeaveData(
+                        leave_type = leaveType,
+                        date_leave = date,
+                        courseName = courseName,
+                        hours = hours)
+                    )
                 }
             }
 
@@ -93,6 +99,14 @@ fun WebViewLeaveScreen(url: String, onLoginSuccess: (String) -> Unit, onLeaveApp
             settings.domStorageEnabled = true
             CookieManager.getInstance().setAcceptCookie(true)
 
+            // 禁用縮放
+            settings.setSupportZoom(false)
+            settings.builtInZoomControls = false
+
+            // 啟用自動縮放
+            settings.useWideViewPort = true
+            settings.loadWithOverviewMode = true
+
 
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String) {
@@ -105,7 +119,7 @@ fun WebViewLeaveScreen(url: String, onLoginSuccess: (String) -> Unit, onLeaveApp
                 }
 
 
-                override fun onPageCommitVisible(view: WebView, url: String) {
+                /*override fun onPageCommitVisible(view: WebView, url: String) {
                     super.onPageCommitVisible(view, url)
                     Log.d("WebViewLeaveScreen", "Page commit visible: $url")
                     view.evaluateJavascript(
@@ -121,7 +135,7 @@ fun WebViewLeaveScreen(url: String, onLoginSuccess: (String) -> Unit, onLeaveApp
                         """,
                         null
                     )
-                }
+                }*/
             }
             addJavascriptInterface(LeaveAppClickInterface(onLeaveAppClicked), "LeaveAppClicked")
             loadUrl(url)
@@ -134,7 +148,10 @@ class LeaveAppClickInterface(private val onLeaveAppClicked: (String?) -> Unit) {
     fun postMessage(message: String) {
         if (message == "LeaveAppClicked") {
             Log.d("LeaveAppClickInterface", "LeaveAppClicked message received")
-            onLeaveAppClicked(CookieManager.getInstance().getCookie("https://casauth.nttu.edu.tw/cas/login?service=https%3a%2f%2faskleave.nttu.edu.tw%2findex.aspx"))
+            onLeaveAppClicked(
+                CookieManager.getInstance()
+                    .getCookie("https://casauth.nttu.edu.tw/cas/login?service=https%3a%2f%2faskleave.nttu.edu.tw%2findex.aspx")
+            )
         }
     }
 }
@@ -150,77 +167,17 @@ fun LeaveScreen(viewModel: LeaveDatabase.LeaveViewModel, activity: ComponentActi
         leaveList = observedLeaveList
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.Start,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "請假系統",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-
-        Column(
-            modifier = Modifier
-                .wrapContentWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Button(onClick = {
-                Log.d("LeaveScreen", "我要請假 button clicked")
-                webViewLoaded = false
-                cookies = null
-                leaveList = emptyList()
-            }, enabled = true) {
-                Text("我要請假")
-            }
-
-            Button(onClick = {
-                viewModel.loadAllLeaves()
-            }) {
-                Text("所有請假紀錄")
-            }
-
-            Button(onClick = {
-                activity.finish()
-            }) {
-                Text("返回主畫面")
-            }
-        }
-
-        if ( cookies == null) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (cookies == null) {
             if (!webViewLoaded) {
-                Log.d("LeaveScreen", "Loading WebViewLeaveScreen")
                 WebViewLeaveScreen(
                     "https://casauth.nttu.edu.tw/cas/login?service=https%3a%2f%2faskleave.nttu.edu.tw%2findex.aspx",
                     { cookies = it; webViewLoaded = true },
                     { leaveAppCookies ->
                         if (leaveAppCookies != null) {
-                            Log.d("LeaveScreen", "LeaveApp cookies received")
                             viewModel.viewModelScope.launch {
-                                val fetchedData = fetchLeaveData(
-                                    "https://casauth.nttu.edu.tw/cas/login?service=https%3a%2f%2faskleave.nttu.edu.tw%2findex.aspx",
-                                    leaveAppCookies
-                                )
-                                if (fetchedData.isNotEmpty()) {
-                                    fetchedData.forEach { viewModel.insertOrUpdateLeave(it) }
-                                    viewModel.loadAllLeaves()
-                                    leaveList = fetchedData;
-                                }
+                                // 這裡可以加入網頁抓取資料的功能
                             }
-                        } else {
-                            Log.e("LeaveScreen", "LeaveApp cookies are null")
                         }
                     }
                 )
@@ -231,6 +188,15 @@ fun LeaveScreen(viewModel: LeaveDatabase.LeaveViewModel, activity: ComponentActi
                     Text(text = "假別: ${leave.leave_type}, 日期: ${leave.date_leave}, 科目: ${leave.courseName}, 時數: ${leave.hours}")
                 }
             }
+        }
+
+        FloatingActionButton(
+            onClick = { activity.finish() },
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(16.dp)
+        ) {
+            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "返回")
         }
     }
 }
