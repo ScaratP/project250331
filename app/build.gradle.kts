@@ -64,7 +64,6 @@ dependencies {
     implementation ("org.jsoup:jsoup:1.19.1")
     implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
 
-
     implementation ("androidx.room:room-runtime:2.6.1")
     ksp("androidx.room:room-compiler:2.5.0")
     annotationProcessor ("androidx.room:room-compiler:2.6.1")

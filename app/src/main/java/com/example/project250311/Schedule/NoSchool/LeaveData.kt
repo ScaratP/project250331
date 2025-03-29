@@ -22,16 +22,18 @@ import java.time.LocalTime
 @Entity(tableName = "leave_table")
 data class LeaveData(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val leave_type: String,
-    val date_leave:String,
-    val courseName: String,
-    val hours: Int
+    val recordType: String,   // "課程" 或 "集會"
+    val leave_type: String,   // 課程 & 集會請假類型
+    val date_leave: String,   // 日期 (課程 or 集會)
+    val courseName: String,    // 課程名稱 或 集會名稱
+    val hours: Int            // 時數
 )
+
 @Dao
 interface LeaveDao {
 
     @Query("SELECT * FROM leave_table WHERE date_leave = :date_leave AND courseName = :courseName")
-    suspend fun getLeaveByDateAndCourse(date_leave: String, courseName: String): LeaveData?
+    suspend fun getLeaveByDateAndEvent(date_leave: String, courseName: String): LeaveData?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(leave: LeaveData)
@@ -42,16 +44,16 @@ interface LeaveDao {
     @Query("SELECT * FROM leave_table WHERE leave_type = :leave_type")
     fun getLeavesByType(leave_type: String): LiveData<List<LeaveData>>
 
-    @Query("SELECT * FROM leave_table WHERE courseName = :courseName")
-    fun getLeavesByCourse(courseName: String): LiveData<List<LeaveData>>
+    @Query("SELECT * FROM leave_table WHERE recordType = :recordType")
+    fun getLeavesByRecordType(recordType: String): LiveData<List<LeaveData>> // 新增：查詢「課程」或「集會」
 
     @Query("SELECT * FROM leave_table")
     suspend fun getAllLeaves(): List<LeaveData>
 
     @Query("DELETE FROM leave_table WHERE id = :leaveId")
     suspend fun deleteLeaveById(leaveId: Int)
-
 }
+
 
 @Database(entities = [LeaveData::class], version = 2, exportSchema = false)
 abstract class LeaveDatabase : RoomDatabase() {
@@ -75,8 +77,7 @@ abstract class LeaveDatabase : RoomDatabase() {
         class LeaveRepository(private val leaveDao: LeaveDao) {
 
             suspend fun insertOrUpdateLeave(leave: LeaveData) {
-                val existingLeave =
-                    leaveDao.getLeaveByDateAndCourse(leave.date_leave, leave.courseName)
+                val existingLeave = leaveDao.getLeaveByDateAndEvent(leave.date_leave, leave.courseName)
                 if (existingLeave == null) {
                     leaveDao.insert(leave)
                 } else {
@@ -89,13 +90,12 @@ abstract class LeaveDatabase : RoomDatabase() {
             fun getLeavesByType(leaveType: String): LiveData<List<LeaveData>> =
                 leaveDao.getLeavesByType(leaveType)
 
-            fun getLeavesByCourse(courseName: String): LiveData<List<LeaveData>> =
-                leaveDao.getLeavesByCourse(courseName)
+            fun getLeavesByRecordType(recordType: String): LiveData<List<LeaveData>> =
+                leaveDao.getLeavesByRecordType(recordType)
 
             suspend fun deleteLeaveById(leaveId: Int) {
                 leaveDao.deleteLeaveById(leaveId)
             }
-
         }
     }
 
@@ -108,8 +108,8 @@ abstract class LeaveDatabase : RoomDatabase() {
             return repository.getLeavesByType(leaveType)
         }
 
-        fun getLeavesByCourse(courseName: String): LiveData<List<LeaveData>> {
-            return repository.getLeavesByCourse(courseName)
+        fun getLeavesByRecordType(recordType: String): LiveData<List<LeaveData>> {
+            return repository.getLeavesByRecordType(recordType)
         }
 
         fun insert(leave: LeaveData) {
@@ -131,4 +131,5 @@ abstract class LeaveDatabase : RoomDatabase() {
             }
         }
     }
+
 }
