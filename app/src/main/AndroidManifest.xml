@@ -29,13 +29,22 @@
         <activity android:name=".Schedule.NoSchool.LeaveActivity"/>
         <activity android:name=".Schedule.Note.NoteActivity"/>
         <activity android:name=".Schedule.Note.NoteListActivity"/>
+
+        <receiver
+            android:name=".Schedule.Notice.NotificationReceiver"
+            android:exported="false"/>
+
+
+
     </application>
 
+    <!-- 📡 網路相關權限 -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>   <!-- 通知權限 -->
 
+    <!-- ⏰ 精確鬧鐘通知 -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 

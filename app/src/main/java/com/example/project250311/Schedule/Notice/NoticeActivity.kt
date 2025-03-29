@@ -2,6 +2,7 @@ package com.example.project250311.Schedule.Notice
 
 
 import android.app.Activity
+import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -16,8 +17,10 @@ import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -25,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
@@ -32,8 +36,11 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.example.project250311.Data.Schedule
 import com.example.project250311.Schedule.GetSchedule.GetScheduleActivity
+import com.example.project250311.Schedule.GetSchedule.setNoticationAlarm
 import com.example.project250311.Schedule.NoSchool.GetLeaveDataActivity
 import com.example.project250311.ui.theme.Project250311Theme
+import kotlinx.datetime.LocalTime
+import java.util.Calendar
 
 class NoticeActivity: ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -48,7 +55,6 @@ class NoticeActivity: ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    //WebViewScreen(url = "https://google.com")
                     NotificationButton()
                 }
             }
@@ -100,29 +106,40 @@ fun NotificationButton(){
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ){
-        Column {
-            //WebViewScreen(url = "https://google.com")
 
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // 立即發送通知的按鈕
             Button(
                 onClick = { sendNotification(context) }
             ) {
-                Text("發送通知")
+                Text("立即發送通知")
+            }
+            // 測試未來鬧鐘通知的按鈕
+            Button(
+                onClick = {
+                    // 建立測試用的 Schedule 物件，將時間設定為當前時間後 1 分鐘
+                    val testSchedule = Schedule(
+                        id = "test1",
+                        courseName = "測試課程",
+                        teacherName = "測試老師",
+                        location = "測試教室",
+                        weekDay = "今天",
+                        startTime = java.time.LocalTime.now().plusMinutes(2),
+                        endTime = java.time.LocalTime.now().plusMinutes(3)
+                    )
+                    // 設定鬧鐘為當前時間後 1 分鐘觸發通知
+                    val testAlarmTime = java.time.LocalTime.now().plusMinutes(1)
+                    setNoticationAlarm(context, testAlarmTime, testSchedule)
+                }
+            ) {
+                Text("測試未來鬧鐘通知")
             }
         }
     }
-
 }
-
-//這個可以顯示&登入
-/*@Composable
-fun WebViewScreen(url: String) {
-    AndroidView(factory = { context ->
-        WebView(context).apply {
-            webViewClient = WebViewClient()
-            loadUrl(url)
-        }
-    })
-}*/
 
 
     fun sendNotification(context: Context) {
@@ -170,5 +187,45 @@ fun WebViewScreen(url: String) {
         with(NotificationManagerCompat.from(context)) {
             notify(notificationId, builder.build())
         }
-    }  //
+    }
+
+    fun setNoticationAlarm(context: Context, alarmTime: LocalTime, course: Schedule) {
+        // 若為 Android 12 (API 31) 以上，檢查是否可以設定精確鬧鐘
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (!alarmManager.canScheduleExactAlarms()) {
+                // 可在此提示使用者或返回
+                return
+            }
+        }
+
+        // 將 LocalTime（僅包含時間）轉換為 Calendar 時間（假設使用當天日期）
+        val alarmCalendar = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, alarmTime.hour)
+            set(Calendar.MINUTE, alarmTime.minute)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+
+        // 建立 Intent 傳遞課程資訊到 NotificationReceiver
+        val alarmIntent = Intent(context, NotificationReceiver::class.java).apply {
+            putExtra("course_id", course.id)
+            putExtra("course_name", course.courseName)
+            putExtra("teacher_name", course.teacherName)
+            putExtra("location", course.location)
+            putExtra("start_time", course.startTime.toString())
+            putExtra("end_time", course.endTime.toString())
+        }
+
+        // 使用 course.id.hashCode() 來保證唯一的 PendingIntent
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            course.id.hashCode(),
+            alarmIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // 使用 AlarmManager 設定精確鬧鐘
+        alarmManager.setExact(AlarmManager.RTC_WAKEUP, alarmCalendar.timeInMillis, pendingIntent)
+    }
 }
