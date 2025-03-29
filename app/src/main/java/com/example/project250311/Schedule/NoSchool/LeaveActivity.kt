@@ -83,7 +83,7 @@ fun LeaveScreen(onFinish: () -> Unit, onRequestLeave: () -> Unit) {
             Button(onClick = {
                 // viewModel.loadAllLeaves()
             }) {
-                Text("所有請假紀錄")
+                Text("請假紀錄")
             }
 
             Button(onClick = {

@@ -112,7 +112,7 @@ abstract class LeaveDatabase : RoomDatabase() {
             return repository.getLeavesByCourse(courseName)
         }
 
-        fun insertOrUpdateLeave(leave: LeaveData) {
+        fun insert(leave: LeaveData) {
             viewModelScope.launch(Dispatchers.IO) {
                 repository.insertOrUpdateLeave(leave)
             }

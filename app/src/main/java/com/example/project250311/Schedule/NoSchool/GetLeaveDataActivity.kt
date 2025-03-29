@@ -20,9 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -33,7 +31,6 @@ import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 
 class GetLeaveDataActivity : ComponentActivity() {
-
     private val viewModel: LeaveDatabase.LeaveViewModel by viewModels {
         object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -44,159 +41,229 @@ class GetLeaveDataActivity : ComponentActivity() {
             }
         }
     }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             LeaveScreen(viewModel, this)
-        }
-    }
-}
-
-suspend fun fetchLeaveData(url: String, cookies: String?): List<LeaveData> {
-    return withContext(Dispatchers.IO) {
-        try {
-            val doc = Jsoup.connect(url).apply {
-                cookies?.let { header("Cookie", it) }
-                userAgent("Mozilla/5.0")
-                timeout(10000)
-            }.get()
-
-            val leaveType = doc.select("#Sel_Leave option[selected]").text()
-            val tableRows = doc.select("#TAB_Course tbody tr")
-            val leaveDataList = mutableListOf<LeaveData>()
-
-            tableRows.forEach { row ->
-                if (row.select("span.switch").isNotEmpty()) {
-                    val date = row.select("td[data-label='請假日期：']").text()
-                    val courseName = row.select("td[data-label='課目名稱：']").text()
-                    val hours = row.select("input[type='radio'][checked]").attr("value").toInt()
-
-                    leaveDataList.add(LeaveData(
-                        leave_type = leaveType,
-                        date_leave = date,
-                        courseName = courseName,
-                        hours = hours)
-                    )
+            WebViewLeaveScreen(
+                url = "https://casauth.nttu.edu.tw/cas/login?service=https%3a%2f%2faskleave.nttu.edu.tw%2findex.aspx",
+                onLoginSuccess = { cookies ->
+                    Log.d("GetLeaveDataActivity", "登入成功，Cookies: $cookies")
+                },
+                onLeaveAppClicked = { leaveData ->
+                    Log.d("GetLeaveDataActivity", "請假資料: $leaveData")
                 }
-            }
-
-            Log.d("fetchLeaveData", "Fetched data: $leaveDataList")
-            return@withContext leaveDataList
-        } catch (e: Exception) {
-            Log.e("fetchLeaveData", "Error fetching data", e)
-            emptyList()
-        }
-    }
-}
-
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-fun WebViewLeaveScreen(url: String, onLoginSuccess: (String) -> Unit, onLeaveAppClicked: (String?) -> Unit) {
-    Log.d("WebViewLeaveScreen", "WebView loading: $url")
-    AndroidView(factory = { context ->
-        WebView(context).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            CookieManager.getInstance().setAcceptCookie(true)
-
-            // 禁用縮放
-            settings.setSupportZoom(false)
-            settings.builtInZoomControls = false
-
-            // 啟用自動縮放
-            settings.useWideViewPort = true
-            settings.loadWithOverviewMode = true
-
-
-            webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView, url: String) {
-                    if (url.contains(".aspx")) {
-                        view.scrollTo(0, 0)
-                        return
-                    }
-                    val cookies = CookieManager.getInstance().getCookie(url)
-                    onLoginSuccess(cookies ?: "")
-                }
-
-
-                /*override fun onPageCommitVisible(view: WebView, url: String) {
-                    super.onPageCommitVisible(view, url)
-                    Log.d("WebViewLeaveScreen", "Page commit visible: $url")
-                    view.evaluateJavascript(
-                        """
-                        (function() {
-                            const button = document.getElementById('btn_Leaveapp');
-                            if (button) {
-                                button.onclick = function() {
-                                    window.LeaveAppClicked.postMessage('LeaveAppClicked');
-                                };
-                            }
-                        })();
-                        """,
-                        null
-                    )
-                }*/
-            }
-            addJavascriptInterface(LeaveAppClickInterface(onLeaveAppClicked), "LeaveAppClicked")
-            loadUrl(url)
-        }
-    })
-}
-
-class LeaveAppClickInterface(private val onLeaveAppClicked: (String?) -> Unit) {
-    @JavascriptInterface
-    fun postMessage(message: String) {
-        if (message == "LeaveAppClicked") {
-            Log.d("LeaveAppClickInterface", "LeaveAppClicked message received")
-            onLeaveAppClicked(
-                CookieManager.getInstance()
-                    .getCookie("https://casauth.nttu.edu.tw/cas/login?service=https%3a%2f%2faskleave.nttu.edu.tw%2findex.aspx")
             )
         }
-    }
-}
-
-@Composable
-fun LeaveScreen(viewModel: LeaveDatabase.LeaveViewModel, activity: ComponentActivity) {
-    var cookies by remember { mutableStateOf<String?>(null) }
-    var leaveList by remember { mutableStateOf(emptyList<LeaveData>()) }
-    val observedLeaveList by viewModel.allLeaves.observeAsState(emptyList())
-    var webViewLoaded by remember { mutableStateOf(false) }
-
-    LaunchedEffect(observedLeaveList) {
-        leaveList = observedLeaveList
+        /*override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            LeaveScreen(viewModel, this)
+        }
+    }*/
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        if (cookies == null) {
-            if (!webViewLoaded) {
-                WebViewLeaveScreen(
-                    "https://casauth.nttu.edu.tw/cas/login?service=https%3a%2f%2faskleave.nttu.edu.tw%2findex.aspx",
-                    { cookies = it; webViewLoaded = true },
-                    { leaveAppCookies ->
-                        if (leaveAppCookies != null) {
-                            viewModel.viewModelScope.launch {
-                                // 這裡可以加入網頁抓取資料的功能
-                            }
-                        }
+    suspend fun fetchLeaveData(url: String, cookies: String?): List<LeaveData> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val doc = Jsoup.connect(url).apply {
+                    cookies?.let { header("Cookie", it) }
+                    userAgent("Mozilla/5.0")
+                    timeout(10000)
+                }.get()
+
+                val leaveType = doc.select("#Sel_Leave option[selected]").text()
+                val tableRows = doc.select("#TAB_Course tbody tr")
+                val leaveDataList = mutableListOf<LeaveData>()
+
+                tableRows.forEach { row ->
+                    if (row.select("span.switch").isNotEmpty()) {
+                        val date = row.select("td[data-label='請假日期：']").text()
+                        val courseName = row.select("td[data-label='課目名稱：']").text()
+                        val hours = row.select("input[type='radio'][checked]").attr("value").toInt()
+
+                        leaveDataList.add(
+                            LeaveData(
+                                leave_type = leaveType,
+                                date_leave = date,
+                                courseName = courseName,
+                                hours = hours
+                            )
+                        )
+                        Log.d(
+                            "fetchLeaveData",
+                            "請假類型: $leaveType, 日期: $date, 科目: $courseName, 時數: $hours"
+                        )
                     }
-                )
-            }
-        } else if (webViewLoaded) {
-            LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                items(leaveList) { leave ->
-                    Text(text = "假別: ${leave.leave_type}, 日期: ${leave.date_leave}, 科目: ${leave.courseName}, 時數: ${leave.hours}")
                 }
+
+                Log.d("fetchLeaveData", "Fetched data: $leaveDataList")
+                return@withContext leaveDataList
+            } catch (e: Exception) {
+                Log.e("fetchLeaveData", "Error fetching data", e)
+                emptyList()
             }
         }
+    }
 
-        FloatingActionButton(
-            onClick = { activity.finish() },
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(16.dp)
-        ) {
-            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "返回")
+    @SuppressLint("SetJavaScriptEnabled")
+    @Composable
+    fun WebViewLeaveScreen(
+        url: String,
+        onLoginSuccess: (String) -> Unit,
+        onLeaveAppClicked: (String?) -> Unit
+    ) {
+        Log.d("WebViewLeaveScreen", "WebView loading: $url")
+        AndroidView(factory = { context ->
+            WebView(context).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.databaseEnabled = true  // 啟用 WebView 資料庫
+                settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE  // 避免加載緩存
+                //禁止使用網頁縮放，並自動縮放網頁到適當大小
+                settings.setSupportZoom(false)
+                settings.builtInZoomControls = false
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = true
+
+                val cookieManager = CookieManager.getInstance()
+                cookieManager.setAcceptCookie(true)
+                cookieManager.setAcceptThirdPartyCookies(this, true)
+
+                webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView, url: String) {
+                        val cookies = CookieManager.getInstance().getCookie(url)
+                        Log.d("WebViewLeaveScreen", "Cookies: $cookies")
+
+                        if (url.contains("index.aspx")) {
+                            // 登入成功
+                            Log.d("WebViewLeaveScreen", "成功登入")
+                            if (!cookies.isNullOrEmpty()) {
+                                onLoginSuccess(cookies)
+                            } else {
+                                Log.e("WebViewLeaveScreen", "登入 Cookie 可能未成功獲取")
+                            }
+                        } else if (url.contains("Leave.aspx")) {
+                            // 用戶已經手動跳轉到請假頁面，監聽 btn_Leaveapp 點擊
+                            Log.d("WebViewLeaveScreen", "偵測到請假頁面，開始監聽按鈕")
+
+                            // 用戶填寫資料後，執行爬蟲
+                            view.evaluateJavascript(
+                                """
+                            (function() {
+                                document.getElementById("btn_Leaveapp").addEventListener('click', function() {
+                                    setTimeout(() => {
+                                        let leaveType = document.getElementById('Sel_Leave')?.value || '';
+                                        let startDate = document.getElementById('Inp_Start_Date')?.value || '';
+                                        let endDate = document.getElementById('Inp_End_Date')?.value || '';
+                                        let courses = [];
+
+                                        document.querySelectorAll('#TAB_Course tbody tr').forEach(row => {
+                                            let checkbox = row.querySelector('input[type=checkbox]');
+                                            if (checkbox && checkbox.checked) {
+                                                let date = row.querySelector('[data-label="請假日期："]').innerText.trim();
+                                                let courseName = row.querySelector('[data-label="課目名稱："]').innerText.trim();
+                                                let hours = '';
+                                                let hourRadios = row.querySelectorAll('input[type=radio]');
+                                                hourRadios.forEach(radio => {
+                                                    if (radio.checked) {
+                                                        hours = radio.value;
+                                                    }
+                                                });
+                                                courses.push({ date, courseName, hours });
+                                            }
+                                        });
+
+                                        let leaveData = {
+                                            leaveType,
+                                            startDate,
+                                            endDate,
+                                            courses
+                                        };
+
+                                        // 回傳資料給 Android 應用
+                                        window.LeaveAppClicked.postMessage(JSON.stringify(leaveData));
+                                    }, 1000); 
+                                });
+                            })();
+                            """,
+                                null
+                            )
+                        }
+                    }
+                }
+                addJavascriptInterface(LeaveAppClickInterface(onLeaveAppClicked), "LeaveAppClicked")
+                loadUrl(url)
+            }
+        })
+    }
+
+    class LeaveAppClickInterface(private val onLeaveAppClicked: (String?) -> Unit) {
+        @JavascriptInterface
+        fun postMessage(message: String) {
+            Log.d("LeaveAppClickInterface", "Message received: $message")
+            if (message != null && message.isNotEmpty()) {
+                onLeaveAppClicked(message)
+            }
+        }
+    }
+
+    @Composable
+    fun LeaveScreen(viewModel: LeaveDatabase.LeaveViewModel, activity: ComponentActivity) {
+        var cookies by remember { mutableStateOf<String?>(null) }
+        var leaveList by remember { mutableStateOf(emptyList<LeaveData>()) }
+        val observedLeaveList by viewModel.allLeaves.observeAsState(emptyList())
+        var webViewLoaded by remember { mutableStateOf(false) }
+
+        LaunchedEffect(observedLeaveList) {
+            leaveList = observedLeaveList
+        }
+
+        Scaffold(//自動管理避免返回按鈕不見
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = { activity.finish() },
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "返回")
+                }
+            }
+        ) { paddingValues ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+            ) {
+                if (cookies == null) {
+                    if (!webViewLoaded) {
+                        WebViewLeaveScreen(
+                            "https://casauth.nttu.edu.tw/cas/login?service=https%3a%2f%2faskleave.nttu.edu.tw%2findex.aspx",
+                            { cookies = it; webViewLoaded = true },
+                            { leaveAppCookies ->
+                                if (leaveAppCookies != null) {
+                                    viewModel.viewModelScope.launch {
+                                        val fetchedData = fetchLeaveData(
+                                            "https://askleave.nttu.edu.tw/Leave.aspx",
+                                            leaveAppCookies
+                                        )
+                                        fetchedData.forEach { leaveData ->
+                                            Log.d("LeaveScreen", "擷取到請假資料: $leaveData")
+                                            viewModel.insert(leaveData)
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                    }
+                } else if (webViewLoaded) {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(leaveList) { leave ->
+                            Text(text = "假別: ${leave.leave_type}, 日期: ${leave.date_leave}, 科目: ${leave.courseName}, 時數: ${leave.hours}")
+                        }
+                    }
+                }
+            }
         }
     }
 }
