@@ -72,11 +72,13 @@ dependencies {
     implementation ("androidx.room:room-ktx:2.6.1")
 
 
+
     implementation ("org.jetbrains.kotlinx:kotlinx-datetime:0.4.0")
     implementation ("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
 
     implementation ("androidx.compose.material3:material3:1.3.1")
     implementation ("androidx.compose.material:material-icons-extended")
+    implementation ("androidx.compose.material:material-icons-extended:1.4.3")
 
     // Testing dependencies
     testImplementation ("junit:junit:4.13.2")

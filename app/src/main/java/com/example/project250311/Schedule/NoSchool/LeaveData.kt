@@ -37,11 +37,11 @@ interface LeaveDao {
     @Update
     suspend fun update(leave: LeaveData)
 
-    @Query("SELECT * FROM leave_table WHERE leave_type = :leave_type")
-    fun getLeavesByType(leave_type: String): LiveData<List<LeaveData>>
-
     @Query("SELECT * FROM leave_table WHERE recordType = :recordType")
     fun getLeavesByRecordType(recordType: String): LiveData<List<LeaveData>> // 新增：查詢「課程」或「集會」
+
+    @Query("SELECT * FROM leave_table WHERE leave_type = :leave_type")
+    fun getLeavesByType(leave_type: String): LiveData<List<LeaveData>>
 
     @Query("SELECT * FROM leave_table WHERE date_leave = :date_leave")
     suspend fun getLeaveByDate(date_leave: String): LeaveData?
@@ -51,6 +51,10 @@ interface LeaveDao {
 
     @Query("SELECT * FROM leave_table")
     suspend fun getAllLeaves(): List<LeaveData>
+
+    @Query("SELECT * FROM leave_table WHERE recordType = :recordType AND courseName = :courseName")
+    suspend fun getLeaveByRecordTypeAndCourse(recordType: String, courseName: String): List<LeaveData>
+
 
 }
 
@@ -77,15 +81,30 @@ abstract class LeaveDatabase : RoomDatabase() {
         class LeaveRepository(private val leaveDao: LeaveDao) {
 
             suspend fun insertOrUpdateLeave(leave: LeaveData) {
-                val existingLeave = leaveDao.getLeaveByDate(leave.date_leave)
-                if (existingLeave == null) {
+                // 先找相同 recordType 和 courseName 的舊資料
+                val sameCourseLeaves = leaveDao.getLeaveByRecordTypeAndCourse(leave.recordType, leave.courseName)
+
+                val existWithSameDate = sameCourseLeaves.find { it.date_leave == leave.date_leave }
+
+                if (existWithSameDate != null) {
+                    // 完全相同（recordType、courseName、date_leave），直接 update
+                    val updatedLeave = existWithSameDate.copy(hours = leave.hours)
+                    leaveDao.update(updatedLeave)
+                    Log.d("LeaveRepository", "update成功: $updatedLeave")
+                } else if (sameCourseLeaves.isNotEmpty()) {
+                    // recordType 和 courseName 相同，但 date 不同
+                    // 加總 hours
+                    val totalHours = sameCourseLeaves.sumOf { it.hours } + leave.hours
+                    val newLeave = leave.copy(hours = totalHours)
+                    leaveDao.insert(newLeave)
+                    Log.d("LeaveRepository", "新增並合併hours成功: $newLeave")
+                } else {
+                    // 完全新資料
                     leaveDao.insert(leave)
                     Log.d("LeaveRepository", "insert成功: $leave")
-                } else {
-                    leaveDao.update(leave)
-                    Log.d("LeaveRepository", "update成功: $leave")
                 }
             }
+
 
             suspend fun getAllLeaves(): List<LeaveData> = leaveDao.getAllLeaves()
 
@@ -114,6 +133,7 @@ abstract class LeaveDatabase : RoomDatabase() {
         fun insert(leave: LeaveData) {
             viewModelScope.launch(Dispatchers.IO) {
                 repository.insertOrUpdateLeave(leave)
+                loadAllLeaves()
             }
         }
 
