@@ -53,6 +53,7 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.runtime.livedata)
+    implementation(libs.androidx.junit.ktx)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -63,6 +64,7 @@ dependencies {
 
     implementation ("org.jsoup:jsoup:1.19.1")
     implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
+    implementation ("com.google.code.gson:gson:2.9.0")
 
     implementation ("androidx.room:room-runtime:2.6.1")
     ksp("androidx.room:room-compiler:2.5.0")
@@ -75,4 +77,11 @@ dependencies {
 
     implementation ("androidx.compose.material3:material3:1.3.1")
     implementation ("androidx.compose.material:material-icons-extended")
+
+    // Testing dependencies
+    testImplementation ("junit:junit:4.13.2")
+    androidTestImplementation ("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation ("androidx.test.espresso:espresso-core:3.5.1")
+    androidTestImplementation ("androidx.room:room-testing:2.5.0")
+    androidTestImplementation ("androidx.arch.core:core-testing:2.2.0")
 }

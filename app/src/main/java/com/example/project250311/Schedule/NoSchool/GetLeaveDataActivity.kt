@@ -1,6 +1,7 @@
 package com.example.project250311.Schedule.NoSchool
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.webkit.CookieManager
@@ -16,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
+import androidx.compose.material3.ScaffoldDefaults.contentWindowInsets
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
@@ -25,6 +27,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -51,12 +55,23 @@ class GetLeaveDataActivity : ComponentActivity() {
                 onLoginSuccess = { cookies ->
                     Log.d("GetLeaveDataActivity", "登入成功，Cookies: $cookies")
                 },
-                onLeaveAppClicked = { leaveData ->
-                    Log.d("GetLeaveDataActivity", "請假資料: $leaveData")
+                onLeaveAppClicked = { jsonString ->
+                    if (!jsonString.isNullOrEmpty()) {
+                        viewModel.viewModelScope.launch {
+                            val gson = Gson()
+                            val type = object : TypeToken<List<LeaveData>>() {}.type
+                            val leaveList: List<LeaveData> = gson.fromJson(jsonString, type)
+
+                            leaveList.forEach { leave ->
+                                Log.d("LeaveScreen", "準備插入: $leave")
+                                viewModel.insert(leave)
+                            }
+                        }
+                    }
                 }
+
             )
         }
-
     }
 
     suspend fun fetchLeaveData(url: String, cookies: String?): List<LeaveData> {
@@ -240,7 +255,7 @@ class GetLeaveDataActivity : ComponentActivity() {
             }
         }
     }
-
+    @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     fun LeaveScreen(viewModel: LeaveDatabase.LeaveViewModel, activity: ComponentActivity) {
         var cookies by remember { mutableStateOf<String?>(null) }
@@ -250,29 +265,59 @@ class GetLeaveDataActivity : ComponentActivity() {
 
         LaunchedEffect(observedLeaveList) {
             leaveList = observedLeaveList
+
+
         }
 
-        Scaffold() { paddingValues ->
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            contentWindowInsets = WindowInsets.systemBars // 確保內容不會被系統列遮擋
+        ) { paddingValues ->
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues)
             ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = {
+                            val intent = Intent(activity, LeaveActivity::class.java)
+                            activity.startActivity(intent)
+                            activity.finish()
+                        }
+                    ) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    Text(
+                        text = "請假記錄",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
                 if (cookies == null) {
                     if (!webViewLoaded) {
                         Column(modifier = Modifier.fillMaxSize()) {
                             WebViewLeaveScreen(
                                 url = "https://casauth.nttu.edu.tw/cas/login?service=https%3a%2f%2faskleave.nttu.edu.tw%2findex.aspx",
-                                { cookies = it; webViewLoaded = true },
-                                { leaveAppCookies ->
-                                    if (leaveAppCookies != null) {
+                                onLoginSuccess = { cookies = it; webViewLoaded = true },
+                                onLeaveAppClicked = { jsonString ->
+                                    if (jsonString != null) {
                                         viewModel.viewModelScope.launch {
-                                            val fetchedData = fetchLeaveData(
-                                                "https://askleave.nttu.edu.tw/Leave.aspx",
-                                                leaveAppCookies
-                                            )
+                                            // 解析 JSON
+                                            val gson = Gson()
+                                            val type = object : TypeToken<List<LeaveData>>() {}.type
+                                            val fetchedData: List<LeaveData> = gson.fromJson(jsonString, type)
+
                                             fetchedData.forEach { leaveData ->
-                                                Log.d("LeaveScreen", "擷取到請假資料: $leaveData")
+                                                Log.d("LeaveScreen", "解析到請假資料: $leaveData")
                                                 viewModel.insert(leaveData)
                                             }
                                         }
@@ -280,12 +325,18 @@ class GetLeaveDataActivity : ComponentActivity() {
                                 }
                             )
                         }
-                    } else if (webViewLoaded) {
+                    } else {
+                        // 當 WebView 已載入完成，可顯示請假資料列表
                         LazyColumn(
-                            modifier = Modifier.weight(1f) // 確保 LazyColumn 不會影響 FloatingActionButton
+                            modifier = Modifier.fillMaxSize()
                         ) {
                             items(leaveList) { leave ->
-                                Text(text = "類型: ${leave.recordType}, 假別: ${leave.leave_type}, 日期: ${leave.date_leave}, 科目: ${leave.courseName}, 時數: ${leave.hours}")
+                                Text(
+                                    text = "類型: ${leave.recordType}, 假別: ${leave.leave_type}, 日期: ${leave.date_leave}, 科目: ${leave.courseName}, 時數: ${leave.hours}",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(8.dp)
+                                )
                             }
                         }
                     }
@@ -294,3 +345,4 @@ class GetLeaveDataActivity : ComponentActivity() {
         }
     }
 }
+

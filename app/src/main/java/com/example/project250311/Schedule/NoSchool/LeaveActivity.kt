@@ -23,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -80,10 +81,12 @@ fun LeaveScreen(onFinish: () -> Unit, onRequestLeave: () -> Unit) {
                 Text("我要請假")
             }
 
+            val context = LocalContext.current
             Button(onClick = {
-                // viewModel.loadAllLeaves()
+                val intent = Intent(context, HistoryActivity::class.java)
+                context.startActivity(intent)
             }) {
-                Text("請假紀錄")
+                Text("查看請假紀錄")
             }
 
             Button(onClick = {

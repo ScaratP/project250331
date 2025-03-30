@@ -1,6 +1,7 @@
 package com.example.project250311.Schedule.NoSchool
 
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
@@ -17,7 +18,6 @@ import androidx.room.RoomDatabase
 import androidx.room.Update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.time.LocalTime
 
 @Entity(tableName = "leave_table")
 data class LeaveData(
@@ -31,10 +31,6 @@ data class LeaveData(
 
 @Dao
 interface LeaveDao {
-
-    @Query("SELECT * FROM leave_table WHERE date_leave = :date_leave AND courseName = :courseName")
-    suspend fun getLeaveByDateAndEvent(date_leave: String, courseName: String): LeaveData?
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(leave: LeaveData)
 
@@ -47,11 +43,15 @@ interface LeaveDao {
     @Query("SELECT * FROM leave_table WHERE recordType = :recordType")
     fun getLeavesByRecordType(recordType: String): LiveData<List<LeaveData>> // 新增：查詢「課程」或「集會」
 
+    @Query("SELECT * FROM leave_table WHERE date_leave = :date_leave")
+    suspend fun getLeaveByDate(date_leave: String): LeaveData?
+
+    @Query("SELECT * FROM leave_table WHERE courseName = :courseName")
+    suspend fun getLeaveByEvent(courseName: String): LeaveData?
+
     @Query("SELECT * FROM leave_table")
     suspend fun getAllLeaves(): List<LeaveData>
 
-    @Query("DELETE FROM leave_table WHERE id = :leaveId")
-    suspend fun deleteLeaveById(leaveId: Int)
 }
 
 
@@ -77,11 +77,13 @@ abstract class LeaveDatabase : RoomDatabase() {
         class LeaveRepository(private val leaveDao: LeaveDao) {
 
             suspend fun insertOrUpdateLeave(leave: LeaveData) {
-                val existingLeave = leaveDao.getLeaveByDateAndEvent(leave.date_leave, leave.courseName)
+                val existingLeave = leaveDao.getLeaveByDate(leave.date_leave)
                 if (existingLeave == null) {
                     leaveDao.insert(leave)
+                    Log.d("LeaveRepository", "insert成功: $leave")
                 } else {
                     leaveDao.update(leave)
+                    Log.d("LeaveRepository", "update成功: $leave")
                 }
             }
 
@@ -93,9 +95,6 @@ abstract class LeaveDatabase : RoomDatabase() {
             fun getLeavesByRecordType(recordType: String): LiveData<List<LeaveData>> =
                 leaveDao.getLeavesByRecordType(recordType)
 
-            suspend fun deleteLeaveById(leaveId: Int) {
-                leaveDao.deleteLeaveById(leaveId)
-            }
         }
     }
 
@@ -119,17 +118,14 @@ abstract class LeaveDatabase : RoomDatabase() {
         }
 
         fun loadAllLeaves() {
+            Log.d("LeaveViewModel", "loadAllLeaves() 被調用") // 添加這行
             viewModelScope.launch(Dispatchers.IO) {
                 val leaves = repository.getAllLeaves()
+                Log.d("LeaveViewModel", "從資料庫獲取到 ${leaves.size} 筆資料") // 添加這行
                 _allLeaves.postValue(leaves)
             }
         }
 
-        fun deleteLeaveById(leaveId: Int) {
-            viewModelScope.launch(Dispatchers.IO) {
-                repository.deleteLeaveById(leaveId)
-            }
-        }
     }
 
 }
