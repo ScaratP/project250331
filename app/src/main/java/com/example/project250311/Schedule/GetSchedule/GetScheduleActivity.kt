@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AlarmManager
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -52,6 +53,7 @@ import com.example.project250311.Data.Schedule
 import com.example.project250311.MainActivity
 import com.example.project250311.Schedule.NoSchool.GetLeaveDataActivity
 import com.example.project250311.Schedule.Notice.NoticeActivity
+import com.example.project250311.Schedule.Notice.NotificationReceiver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
@@ -645,7 +647,7 @@ fun CourseItem(course: Schedule) {
                 if (isEnabled) {
                     val alarmTime = course.startTime.minusMinutes(10) // 提前 10 分鐘通知
                     setNoticationAlarm(context, alarmTime, course)
-                    sendNotification(context, course)
+
                 } else {
                     cancelNotificatuon(context, course)
                 }
@@ -655,27 +657,40 @@ fun CourseItem(course: Schedule) {
 }
 
 
-fun setNoticationAlarm(context: Context, alamTime: LocalTime, course:Schedule){
-
-    val  alamCalendar = Calendar.getInstance().apply {
-        set(Calendar.HOUR_OF_DAY,alamTime.hour)
-        set(Calendar.MINUTE,alamTime.minute)
-        set(Calendar.SECOND,0)
-        set(Calendar.MILLISECOND,0)
+fun setNoticationAlarm(context: Context, alarmTime: LocalTime, course: Schedule) {
+    // 1. 將傳入的 LocalTime（僅包含時間）轉換成 Calendar 時間
+    //    這裡假設使用今天的日期
+    val alarmCalendar = java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.HOUR_OF_DAY, alarmTime.hour)
+        set(java.util.Calendar.MINUTE, alarmTime.minute)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
     }
 
-    val intent = Intent(context,NoticeActivity::class.java).apply {
-        putExtra("course_name",course.courseName)
-        putExtra("location",course.location)
-        putExtra("start_time",course.startTime.toString())
+    // 2. 建立一個 Intent，此 Intent 將用於傳送資料給廣播接收器 (NotificationReceiver)
+    val alarmIntent = Intent(context, NotificationReceiver::class.java).apply {
+        // 傳遞課程資訊到接收器，這些資訊將用於建立通知
+        putExtra("course_id", course.id)
+        putExtra("course_name", course.courseName)
+        putExtra("teacher_name", course.teacherName)
+        putExtra("location", course.location)
+        putExtra("start_time", course.startTime.toString())
+        putExtra("end_time", course.endTime.toString())
     }
 
-    val pendingIntent = PendingIntent.getActivity(
-        context,course.id.hashCode(),intent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    // 3. 使用 PendingIntent 包裝這個 Intent
+    //    這裡利用 course.id.hashCode() 作為 requestCode，確保不同課程擁有唯一 PendingIntent
+    val pendingIntent = PendingIntent.getBroadcast(
+        context,
+        course.id.hashCode(),
+        alarmIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
-    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-    alarmManager.setExact(AlarmManager.RTC_WAKEUP,alamCalendar.timeInMillis,pendingIntent)
+    // 4. 取得 AlarmManager 系統服務，並呼叫 setExact() 設定一個精確的鬧鐘
+    //    AlarmManager.RTC_WAKEUP 表示當鬧鐘觸發時會喚醒裝置（如果需要）
+    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+    alarmManager.setExact(android.app.AlarmManager.RTC_WAKEUP, alarmCalendar.timeInMillis, pendingIntent)
 }
 
 fun cancelNotificatuon(context: Context,course: Schedule){
@@ -686,7 +701,7 @@ fun cancelNotificatuon(context: Context,course: Schedule){
 }
 
 
-fun sendNotification(context: Context, course: Schedule) {
+/*fun sendNotification(context: Context, course: Schedule) {
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         if (ContextCompat.checkSelfPermission(
@@ -731,7 +746,7 @@ fun sendNotification(context: Context, course: Schedule) {
     with(NotificationManagerCompat.from(context)) {
         notify(notificationId, builder.build())
     }
-}
+}*/
 
 // 修改後的 fetchNewData：使用 suspend 清除、插入與讀取課程
 suspend fun fetchNewData(viewModel: CourseViewModel, cookies: String): Boolean {
