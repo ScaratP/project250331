@@ -1,7 +1,6 @@
 // 儲存位置: app/src/main/java/com/example/project250311/Notes/NoteScreen.kt
 package com.example.project250311.Schedule.Note
 
-import android.R.attr.onClick
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -80,7 +79,17 @@ fun NoteScreen(navController: NavController, noteId: Int? = null) {
                             // 按照 start 位置排序段落
                             val sortedSegments = segments.sortedBy { it.start }
                             val fullText = sortedSegments.joinToString("") { it.content }
+
+                            var currentPosition = 0
+                            val recalculatedSegments = sortedSegments.map { segment ->
+                                val newStart = currentPosition
+                                val newEnd = newStart + segment.content.length
+                                currentPosition = newEnd
+                                segment.copy(start = newStart, end = newEnd)
+                            }
                             debugText += "\nFull text: $fullText"
+
+
 
                             // 直接使用純文本設置 TextFieldValue
                             textFieldValue = TextFieldValue(fullText)
@@ -88,8 +97,8 @@ fun NoteScreen(navController: NavController, noteId: Int? = null) {
                             // 如果需要應用樣式，可以再次嘗試 AnnotatedString
                             try {
                                 val builder = AnnotatedString.Builder(fullText)
-                                sortedSegments.forEach { segment ->
-                                    if (segment.start < fullText.length && segment.end <= fullText.length) {
+                                recalculatedSegments.forEach { segment ->
+                                    if (segment.start >= 0 && segment.start < segment.end && segment.end <= fullText.length) {
                                         builder.addStyle(
                                             SpanStyle(
                                                 fontSize = segment.fontSize.sp,
@@ -109,6 +118,7 @@ fun NoteScreen(navController: NavController, noteId: Int? = null) {
                                 debugText += "\nApplied styles to text"
                             } catch (e: Exception) {
                                 debugText += "\nError applying styles: ${e.message}"
+                                textFieldValue = TextFieldValue(fullText)
                             }
                         }
 
@@ -463,18 +473,51 @@ private fun createSegmentsFromAnnotatedString(
 ): List<NoteSegment> {
     val segments = mutableListOf<NoteSegment>()
     val text = annotatedString.text
-    val spanStyles = annotatedString.spanStyles
 
-    println("AnnotatedString text: $text, spanStyles: $spanStyles")
+    // 如果沒有文本，返回空列表
+    if (text.isEmpty()) {
+        return segments
+    }
 
-    if (spanStyles.isEmpty()) {
-        if (text.isNotEmpty()) {
+    // 如果沒有樣式，創建一個默認段落
+    if (annotatedString.spanStyles.isEmpty()) {
+        segments.add(
+            NoteSegment(
+                noteId = noteId,
+                content = text,
+                start = 0,
+                end = text.length,
+                fontSize = 20f,
+                fontColor = Color.Black.value.toLong(),
+                backgroundColor = Color.Transparent.value.toLong(),
+                isBold = false,
+                isItalic = false
+            )
+        )
+        return segments
+    }
+
+    // 有樣式的情況
+    val spanRanges = mutableListOf<Triple<Int, Int, SpanStyle>>()
+    annotatedString.spanStyles.forEach { spanStyle ->
+        spanRanges.add(Triple(spanStyle.start, spanStyle.end, spanStyle.item))
+    }
+
+    // 排序樣式區間
+    spanRanges.sortBy { it.first }
+
+    // 處理每個區間
+    var currentPosition = 0
+    spanRanges.forEach { (start, end, style) ->
+        // 處理樣式區間前的無樣式文本
+        if (start > currentPosition) {
+            val plainText = text.substring(currentPosition, start)
             segments.add(
                 NoteSegment(
                     noteId = noteId,
-                    content = text,
-                    start = 0,
-                    end = text.length,
+                    content = plainText,
+                    start = currentPosition,
+                    end = start,
                     fontSize = 20f,
                     fontColor = Color.Black.value.toLong(),
                     backgroundColor = Color.Transparent.value.toLong(),
@@ -482,72 +525,50 @@ private fun createSegmentsFromAnnotatedString(
                     isItalic = false
                 )
             )
-            println("Added default segment: $text")
         }
-    } else {
-        var lastEnd = 0
-        spanStyles.forEach { style ->
-            if (style.start > lastEnd) {
-                val unformattedContent = text.substring(lastEnd, style.start)
-                if (unformattedContent.isNotEmpty()) {
-                    segments.add(
-                        NoteSegment(
-                            noteId = noteId,
-                            content = unformattedContent,
-                            start = lastEnd,
-                            end = style.start,
-                            fontSize = 20f,
-                            fontColor = Color.Black.value.toLong(),
-                            backgroundColor = Color.Transparent.value.toLong(),
-                            isBold = false,
-                            isItalic = false
-                        )
-                    )
-                    println("Added unformatted segment: $unformattedContent, start: $lastEnd, end: ${style.start}")
-                }
-            }
-            val formattedContent = text.substring(style.start, style.end)
-            if (formattedContent.isNotEmpty()) {
-                segments.add(
-                    NoteSegment(
-                        noteId = noteId,
-                        content = formattedContent,
-                        start = style.start,
-                        end = style.end,
-                        fontSize = style.item.fontSize.value,
-                        fontColor = style.item.color.value.toLong(),
-                        backgroundColor = style.item.background.value.toLong(),
-                        isBold = style.item.fontWeight == FontWeight.Bold,
-                        isItalic = style.item.fontStyle == FontStyle.Italic
-                    )
+
+        // 處理有樣式的文本
+        if (end > start) {
+            val styledText = text.substring(start, end)
+            segments.add(
+                NoteSegment(
+                    noteId = noteId,
+                    content = styledText,
+                    start = start,
+                    end = end,
+                    fontSize = style.fontSize?.value ?: 20f,
+                    fontColor = style.color.value.toLong(),
+                    backgroundColor = style.background.value.toLong(),
+                    isBold = style.fontWeight == FontWeight.Bold,
+                    isItalic = style.fontStyle == FontStyle.Italic
                 )
-                println("Added formatted segment: $formattedContent, start: ${style.start}, end: ${style.end}")
-            }
-            lastEnd = style.end
+            )
         }
-        if (lastEnd < text.length) {
-            val remainingContent = text.substring(lastEnd, text.length)
-            if (remainingContent.isNotEmpty()) {
-                segments.add(
-                    NoteSegment(
-                        noteId = noteId,
-                        content = remainingContent,
-                        start = lastEnd,
-                        end = text.length,
-                        fontSize = 20f,
-                        fontColor = Color.Black.value.toLong(),
-                        backgroundColor = Color.Transparent.value.toLong(),
-                        isBold = false,
-                        isItalic = false
-                    )
-                )
-                println("Added remaining segment: $remainingContent, start: $lastEnd, end: ${text.length}")
-            }
-        }
+
+        currentPosition = end
     }
-    println("Generated segments: $segments")
+
+    // 處理最後一個區間後的無樣式文本
+    if (currentPosition < text.length) {
+        val remainingText = text.substring(currentPosition, text.length)
+        segments.add(
+            NoteSegment(
+                noteId = noteId,
+                content = remainingText,
+                start = currentPosition,
+                end = text.length,
+                fontSize = 20f,
+                fontColor = Color.Black.value.toLong(),
+                backgroundColor = Color.Transparent.value.toLong(),
+                isBold = false,
+                isItalic = false
+            )
+        )
+    }
+
     return segments
 }
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

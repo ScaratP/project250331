@@ -219,8 +219,10 @@ fun AppNavHost(
             route = "note_view/{noteId}",
             arguments = listOf(navArgument("noteId") { type = NavType.IntType })
         ) { backStackEntry ->
-            val noteId = backStackEntry.arguments?.getInt("noteId") ?: 0
-            NoteViewerScreen(navController, noteId)
+            val noteId = backStackEntry.arguments?.getInt("noteId")
+            noteId?.let {
+                NoteViewerScreen(navController, it)
+            }
         }
     }
 }

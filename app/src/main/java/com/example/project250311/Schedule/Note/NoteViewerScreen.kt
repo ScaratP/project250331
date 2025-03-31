@@ -56,11 +56,21 @@ fun NoteViewerScreen(navController: NavController, noteId: Int) {
                         val sortedSegments = segments.sortedBy { it.start }
                         val fullText = sortedSegments.joinToString("") { it.content }
 
+                        // 重新計算位置
+                        var currentPosition = 0
+                        val recalculatedSegments = sortedSegments.map { segment ->
+                            val newStart = currentPosition
+                            val newEnd = newStart + segment.content.length
+                            currentPosition = newEnd
+                            segment.copy(start = newStart, end = newEnd)
+                        }
+
                         // 構建包含樣式的 AnnotatedString
                         noteContent = buildAnnotatedString {
                             append(fullText)
-                            sortedSegments.forEach { segment ->
-                                if (segment.start < fullText.length && segment.end <= fullText.length) {
+                            recalculatedSegments.forEach { segment ->
+                                // 確保位置有效
+                                if (segment.start >= 0 && segment.end <= fullText.length && segment.start < segment.end) {
                                     addStyle(
                                         SpanStyle(
                                             fontSize = segment.fontSize.sp,
@@ -75,6 +85,9 @@ fun NoteViewerScreen(navController: NavController, noteId: Int) {
                                 }
                             }
                         }
+                    } else {
+                        // 沒有段落時顯示空文本
+                        noteContent = AnnotatedString("")
                     }
                     isLoading = false
                 } else {
@@ -174,7 +187,9 @@ fun NoteViewerScreen(navController: NavController, noteId: Int) {
                                 } else {
                                     Text(
                                         text = noteContent,
-                                        modifier = Modifier.fillMaxWidth()
+                                        modifier = Modifier.fillMaxWidth(),
+                                        style = MaterialTheme.typography.bodyLarge, // 添加合適的文字樣式
+                                        lineHeight = 24.sp  // 調整行高以改善可讀性
                                     )
                                 }
                             }
