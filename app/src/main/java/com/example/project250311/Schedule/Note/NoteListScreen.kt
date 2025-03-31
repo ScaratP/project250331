@@ -20,6 +20,9 @@ import androidx.navigation.NavController
 import com.example.project250311.Data.Note
 import com.example.project250311.Data.NoteDatabase
 import kotlinx.coroutines.launch
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.Edit
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,9 +112,15 @@ fun NotesScreen(navController: NavController) {
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(notes) { note ->
-                        NoteItem(note = note) {
-                            navController.navigate("note_edit/${note.id}")
-                        }
+                        NoteItem(
+                            note = note,
+                            onView = {
+                                navController.navigate("note_view/${note.id}")
+                            },
+                            onEdit = {
+                                navController.navigate("note_edit/${note.id}")
+                            }
+                        )
                     }
                 }
             }
@@ -119,28 +128,3 @@ fun NotesScreen(navController: NavController) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun NoteItem(note: Note, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        elevation = CardDefaults.cardElevation(
-            defaultElevation = 2.dp
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-        ) {
-            Text(
-                text = note.name,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-        }
-    }
-}

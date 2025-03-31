@@ -1,6 +1,7 @@
 // 儲存位置: app/src/main/java/com/example/project250311/Notes/NoteScreen.kt
 package com.example.project250311.Schedule.Note
 
+import android.R.attr.onClick
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,6 +29,11 @@ import com.example.project250311.Data.Note
 import com.example.project250311.Data.NoteSegment
 import com.example.project250311.Data.NoteDatabase
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.VisualTransformation
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,6 +51,8 @@ fun NoteScreen(navController: NavController, noteId: Int? = null) {
     var showOverwriteDialog by remember { mutableStateOf(false) }
     var existingNote by remember { mutableStateOf<Note?>(null) }
     var isLoading by remember { mutableStateOf(noteId != null) }
+    var showSaveSuccessMessage by remember { mutableStateOf(false) }
+    var debugText by remember { mutableStateOf("") } // 用於調試
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -59,39 +67,77 @@ fun NoteScreen(navController: NavController, noteId: Int? = null) {
                 try {
                     val note = noteDao.getNoteById(noteId)
                     val segments = noteDao.getSegmentsForNote(noteId)
-                    println("Loaded note: $note, segments: $segments")
+                    debugText = "Loaded note: $note, segments: ${segments.size}"
+
                     if (note != null) {
                         noteName = note.name
-                        val builder = AnnotatedString.Builder()
-                        segments.forEach { segment ->
-                            println("Appending segment: ${segment.content}, start: ${segment.start}, end: ${segment.end}")
-                            builder.append(segment.content)
-                            builder.addStyle(
-                                SpanStyle(
-                                    fontSize = segment.fontSize.sp,
-                                    fontWeight = if (segment.isBold) FontWeight.Bold else FontWeight.Normal,
-                                    fontStyle = if (segment.isItalic) FontStyle.Italic else FontStyle.Normal,
-                                    color = Color(segment.fontColor),
-                                    background = Color(segment.backgroundColor)
-                                ),
-                                segment.start,
-                                segment.end
-                            )
+
+                        // 檢查是否有段落
+                        if (segments.isEmpty()) {
+                            debugText += "\nNo segments found"
+                            textFieldValue = TextFieldValue("")
+                        } else {
+                            // 按照 start 位置排序段落
+                            val sortedSegments = segments.sortedBy { it.start }
+                            val fullText = sortedSegments.joinToString("") { it.content }
+                            debugText += "\nFull text: $fullText"
+
+                            // 直接使用純文本設置 TextFieldValue
+                            textFieldValue = TextFieldValue(fullText)
+
+                            // 如果需要應用樣式，可以再次嘗試 AnnotatedString
+                            try {
+                                val builder = AnnotatedString.Builder(fullText)
+                                sortedSegments.forEach { segment ->
+                                    if (segment.start < fullText.length && segment.end <= fullText.length) {
+                                        builder.addStyle(
+                                            SpanStyle(
+                                                fontSize = segment.fontSize.sp,
+                                                fontWeight = if (segment.isBold) FontWeight.Bold else FontWeight.Normal,
+                                                fontStyle = if (segment.isItalic) FontStyle.Italic else FontStyle.Normal,
+                                                color = Color(segment.fontColor),
+                                                background = Color(segment.backgroundColor)
+                                            ),
+                                            segment.start,
+                                            segment.end
+                                        )
+                                    }
+                                }
+                                annotatedString = builder.toAnnotatedString()
+                                // 嘗試重新設置帶有樣式的 TextFieldValue
+                                textFieldValue = TextFieldValue(annotatedString)
+                                debugText += "\nApplied styles to text"
+                            } catch (e: Exception) {
+                                debugText += "\nError applying styles: ${e.message}"
+                            }
                         }
-                        annotatedString = builder.toAnnotatedString()
-                        textFieldValue = TextFieldValue(annotatedString)
+
                         isSaved = true
-                        println("Loaded note for editing: $note, annotatedString: $annotatedString")
+                        debugText += "\nNote load completed"
                     } else {
-                        println("No note found with id: $noteId")
+                        debugText = "No note found with id: $noteId"
                     }
                     isLoading = false
                 } catch (e: Exception) {
-                    println("Failed to load note: ${e.message}")
+                    debugText = "Failed to load note: ${e.message}"
                     isLoading = false
                 }
             }
         }
+    }
+
+    // 儲存成功提示對話框
+    if (showSaveSuccessMessage) {
+        AlertDialog(
+            onDismissRequest = { showSaveSuccessMessage = false },
+            title = { Text("儲存成功") },
+            text = { Text("筆記已成功儲存") },
+            confirmButton = {
+                TextButton(onClick = { showSaveSuccessMessage = false }) {
+                    Text("確定")
+                }
+            }
+        )
     }
 
     // 覆蓋確認對話框
@@ -117,12 +163,11 @@ fun NoteScreen(navController: NavController, noteId: Int? = null) {
                                 )
                                 segments.forEach { segment ->
                                     noteDao.insertSegment(segment)
-                                    println("Inserted segment: $segment")
                                 }
                                 noteIdState = note.id
                                 isSaved = true
                                 showOverwriteDialog = false
-                                println("Overwritten note: $updatedNote")
+                                showSaveSuccessMessage = true // 顯示儲存成功提示
                             }
                         }
                     }
@@ -150,7 +195,6 @@ fun NoteScreen(navController: NavController, noteId: Int? = null) {
                 actions = {
                     IconButton(
                         onClick = {
-                            println("SAVE button clicked")
                             scope.launch {
                                 try {
                                     val existing = noteDao.getNoteByName(noteName)
@@ -169,11 +213,10 @@ fun NoteScreen(navController: NavController, noteId: Int? = null) {
                                             )
                                             segments.forEach { segment ->
                                                 noteDao.insertSegment(segment)
-                                                println("Inserted segment: $segment")
                                             }
                                             noteIdState = insertedId
                                             isSaved = true
-                                            println("Inserted note: $newNote, noteId: $noteIdState")
+                                            showSaveSuccessMessage = true // 顯示儲存成功提示
                                         } else {
                                             // 更新筆記
                                             val updatedNote = Note(
@@ -190,14 +233,14 @@ fun NoteScreen(navController: NavController, noteId: Int? = null) {
                                             )
                                             segments.forEach { segment ->
                                                 noteDao.insertSegment(segment)
-                                                println("Inserted segment: $segment")
                                             }
                                             isSaved = true
-                                            println("Updated note: $updatedNote")
+                                            showSaveSuccessMessage = true // 顯示儲存成功提示
                                         }
                                     }
                                 } catch (e: Exception) {
-                                    println("Failed to save note: ${e.message}")
+                                    // 處理錯誤
+                                    debugText = "Failed to save note: ${e.message}"
                                 }
                             }
                         }
@@ -244,6 +287,20 @@ fun NoteScreen(navController: NavController, noteId: Int? = null) {
                     ),
                     singleLine = true
                 )
+
+                // 顯示調試信息（可以在發布版本中移除）
+                if (debugText.isNotEmpty()) {
+                    Text(
+                        text = debugText,
+                        color = Color.Red,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .background(Color.LightGray.copy(alpha = 0.3f))
+                            .padding(4.dp)
+                    )
+                }
 
                 // 格式工具列
                 Row(
@@ -305,11 +362,9 @@ fun NoteScreen(navController: NavController, noteId: Int? = null) {
                 }
 
                 // 筆記內容編輯區
-                // 改為完全不使用 colors 參數
-                TextField(
+                BasicTextField(
                     value = textFieldValue,
                     onValueChange = { newValue ->
-                        println("TextField onValueChange called with newValue: ${newValue.text}")
                         val previousText = textFieldValue.text
                         val newText = newValue.text
                         val previousLength = previousText.length
@@ -344,16 +399,29 @@ fun NoteScreen(navController: NavController, noteId: Int? = null) {
                         }
 
                         annotatedString = builder.toAnnotatedString()
-                        textFieldValue = newValue.copy(annotatedString = annotatedString)
+                        // 保持選擇區域和輸入法組合
+                        textFieldValue = TextFieldValue(
+                            annotatedString = annotatedString,
+                            selection = newValue.selection,
+                            composition = newValue.composition
+                        )
                         isSaved = false // 編輯文字時，設置為未儲存
-                        println("TextField updated successfully, annotatedString: $annotatedString")
                     },
+                    textStyle = LocalTextStyle.current.copy(
+                        color = MaterialTheme.colorScheme.onSurface
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
                         .clip(RoundedCornerShape(8.dp))
                         .background(MaterialTheme.colorScheme.surface)
                         .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+                        .padding(16.dp),
+                    // 以下是控制外觀的參數
+                    visualTransformation = VisualTransformation.None,
+                    interactionSource = remember { MutableInteractionSource() },
+                    singleLine = false
                 )
             }
         }
@@ -479,4 +547,57 @@ private fun createSegmentsFromAnnotatedString(
     }
     println("Generated segments: $segments")
     return segments
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun NoteItem(
+    note: Note,
+    onView: () -> Unit,
+    onEdit: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onView),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 2.dp
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = note.name,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+
+            Row {
+                // 查看按鈕
+                IconButton(onClick = onView) {
+                    Icon(
+                        Icons.Default.Visibility,
+                        contentDescription = "查看",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                // 編輯按鈕
+                IconButton(onClick = onEdit) {
+                    Icon(
+                        Icons.Default.Edit,
+                        contentDescription = "編輯",
+                        tint = MaterialTheme.colorScheme.secondary
+                    )
+                }
+            }
+        }
+    }
 }

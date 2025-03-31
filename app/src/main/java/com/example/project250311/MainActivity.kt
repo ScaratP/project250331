@@ -29,6 +29,7 @@ import com.example.project250311.Data.CourseViewModel
 import com.example.project250311.Schedule.Note.NoteScreen
 import com.example.project250311.Schedule.GetSchedule.ScheduleScreen
 import com.example.project250311.Schedule.NoSchool.LeaveSystemScreen
+import com.example.project250311.Schedule.Note.NoteViewerScreen
 import com.example.project250311.Schedule.Note.NotesScreen
 import com.example.project250311.Schedule.Notice.NotificationManagerScreen
 import com.example.project250311.ui.theme.Project250311Theme
@@ -211,6 +212,15 @@ fun AppNavHost(
         ) { backStackEntry ->
             val noteId = backStackEntry.arguments?.getInt("noteId")
             NoteScreen(navController, noteId)
+        }
+
+        // 筆記查看頁面
+        composable(
+            route = "note_view/{noteId}",
+            arguments = listOf(navArgument("noteId") { type = NavType.IntType })
+        ) { backStackEntry ->
+            val noteId = backStackEntry.arguments?.getInt("noteId") ?: 0
+            NoteViewerScreen(navController, noteId)
         }
     }
 }
