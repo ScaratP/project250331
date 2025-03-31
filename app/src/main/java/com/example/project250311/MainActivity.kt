@@ -1,4 +1,3 @@
-// 儲存位置: app/src/main/java/com/example/project250311/MainActivity.kt
 package com.example.project250311
 
 import android.os.Bundle
@@ -31,6 +30,7 @@ import com.example.project250311.Schedule.Note.NoteScreen
 import com.example.project250311.Schedule.GetSchedule.ScheduleScreen
 import com.example.project250311.Schedule.NoSchool.LeaveSystemScreen
 import com.example.project250311.Schedule.Note.NotesScreen
+import com.example.project250311.Schedule.Notice.NotificationManagerScreen
 import com.example.project250311.ui.theme.Project250311Theme
 import kotlinx.coroutines.launch
 
@@ -51,7 +51,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             Project250311Theme {
-                AppWithNavigation(courseViewModel)
+                // 將 startDestination 傳遞給函數
+                val startDestination =
+                    if (intent?.getBooleanExtra("OPEN_SCHEDULE", false) == true) "schedule"
+                    else "map"
+
+                AppWithNavigation(
+                    courseViewModel = courseViewModel,
+                    initialDestination = startDestination
+                )
             }
         }
     }
@@ -66,7 +74,10 @@ data class NavigationItem(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppWithNavigation(courseViewModel: CourseViewModel) {
+fun AppWithNavigation(
+    courseViewModel: CourseViewModel,
+    initialDestination: String = "map"
+) {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -141,6 +152,7 @@ fun AppWithNavigation(courseViewModel: CourseViewModel) {
             AppNavHost(
                 navController = navController,
                 courseViewModel = courseViewModel,
+                initialDestination = initialDestination,
                 modifier = Modifier.padding(paddingValues)
             )
         }
@@ -151,11 +163,12 @@ fun AppWithNavigation(courseViewModel: CourseViewModel) {
 fun AppNavHost(
     navController: NavHostController,
     courseViewModel: CourseViewModel,
+    initialDestination: String = "map",
     modifier: Modifier = Modifier
 ) {
     NavHost(
         navController = navController,
-        startDestination = "map",
+        startDestination = initialDestination,
         modifier = modifier
     ) {
         // 地圖畫面
@@ -180,7 +193,7 @@ fun AppNavHost(
 
         // 通知設定
         composable("notice") {
-            NoticeScreen(navController)
+            NotificationManagerScreen(courseViewModel, navController)
         }
 
         // 筆記編輯/新增
@@ -207,12 +220,5 @@ fun AppNavHost(
 fun MapScreen() {
     Box(modifier = Modifier.fillMaxSize()) {
         Text("地圖畫面 - 尚未實現")
-    }
-}
-
-@Composable
-fun NoticeScreen(navController: NavController) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        Text("通知設定畫面 - 尚未實現")
     }
 }

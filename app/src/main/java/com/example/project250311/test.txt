@@ -1,0 +1,114 @@
+@Composable
+fun MainScreen() {
+    val context = LocalContext.current
+
+    Project250311Theme {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // 上半部兩個按鈕
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                MenuButton(
+                    text = "Schedule",
+                    icon = Icons.Default.CalendarToday,
+                    onClick = {
+                        context.startActivity(Intent(context, GetScheduleActivity::class.java))
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+                MenuButton(
+                    text = "Notice",
+                    icon = Icons.Default.Notifications,
+                    onClick = {
+                        context.startActivity(Intent(context, NoticeActivity::class.java))
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            // 下半部三個按鈕
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                MenuButton(
+                    text = "Leave",
+                    icon = Icons.Default.ExitToApp,
+                    onClick = {
+                        context.startActivity(Intent(context, LeaveActivity::class.java))
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+//                MenuButton(
+//                    text = "Notes",
+//                    icon = Icons.Default.Note,
+//                    onClick = {
+//                        context.startActivity(Intent(context, NoteListActivity::class.java))
+//                    },
+//                    modifier = Modifier.weight(1f)
+//                )
+//                MenuButton(
+//                    text = "More",
+//                    icon = Icons.Default.MoreHoriz,
+//                    onClick = {
+//                        context.startActivity(Intent(context, NoteActivity::class.java))
+//                    },
+//                    modifier = Modifier.weight(1f)
+//                )
+            }
+        }
+    }
+}
+
+@Composable
+fun MenuButton(
+    text: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier
+            .padding(8.dp)
+            .fillMaxHeight(),
+        elevation = CardDefaults.cardElevation(4.dp),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(onClick = onClick)
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = text,
+                modifier = Modifier
+                    .size(48.dp)
+                    .padding(bottom = 8.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = text,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+

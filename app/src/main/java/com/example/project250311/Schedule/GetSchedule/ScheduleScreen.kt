@@ -531,53 +531,112 @@ fun cancelNotification(context: Context, course: Schedule) {
     Log.d("CancelNotification", "Cancelled notification for ${course.courseName}")
 }
 
-suspend fun fetchWebData(url: String, cookies: String?): List<Schedule> = withContext(Dispatchers.IO) {
-    try {
-        val doc = Jsoup.connect(url).header("Cookie", cookies ?: "").userAgent("Mozilla/5.0").timeout(10000).get()
-        val rows = doc.select("table.NTTU_GridView tr").drop(1)
-        val weekDays = listOf("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
-        val timeSlots = listOf("07:00" to "08:00", /* ... */ "21:00" to "22:00").map { LocalTime.parse(it.first) to LocalTime.parse(it.second) }
+suspend fun fetchWebData(url: String, cookies: String?): List<Schedule> {
+    return withContext(Dispatchers.IO) {
+        try {
+            val doc = Jsoup.connect(url).apply {
+                cookies?.let { header("Cookie", it) }
+                userAgent("Mozilla/5.0")
+                timeout(10000)
+            }.get()
 
-        val schedules = rows.flatMapIndexed { rowIndex, row ->
-            if (rowIndex >= timeSlots.size) return@flatMapIndexed emptyList()
-            val (startTime, endTime) = timeSlots[rowIndex]
-            row.select("td").mapIndexedNotNull { colIndex, column ->
-                val title = column.selectFirst("span[title]")?.attr("title")?.trim() ?: return@mapIndexedNotNull null
-                val weekDay = if (colIndex in 1..7) weekDays[colIndex - 1] else "未知"
-                val parsedData = parseTitle(title)
-                Schedule(
-                    id = "$colIndex$rowIndex",
-                    courseName = parsedData["科目名稱"] ?: "未知課程",
-                    teacherName = parsedData["授課教師"] ?: "未知教師",
-                    location = parsedData["場地"] ?: "其它",
-                    weekDay = weekDay,
-                    startTime = startTime,
-                    endTime = endTime
-                )
-            }
-        }
+            val table = doc.select("table.NTTU_GridView")
+            val rows = table.select("tr")
+            val tempDataList = mutableListOf<Schedule>()
 
-        // 合併連續時間段
-        schedules.groupBy { it.courseName to it.weekDay }.flatMap { (key, courses) ->
-            val sorted = courses.sortedBy { it.startTime }
-            buildList {
-                var current: Schedule? = null
-                for (course in sorted) {
-                    if (current == null) {
-                        current = course
-                    } else if (current.endTime == course.startTime) {
-                        current = current.copy(endTime = course.endTime)
-                    } else {
-                        add(current)
-                        current = course
+            val weekDays = listOf("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+            val startTimes = listOf(
+                "07:00", "08:00", "09:00", "10:00", "11:00", "12:00", "13:00",
+                "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00"
+            ).map { LocalTime.parse(it) }
+            val endTimes = listOf(
+                "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00",
+                "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00"
+            ).map { LocalTime.parse(it) }
+
+            // 收集階段：使用原始時間，不提前調整
+            val contentRows = rows.drop(1)
+            for ((rowIndex, row) in contentRows.withIndex()) {
+                val columns = row.select("td")
+                for ((colIndex, column) in columns.withIndex()) {
+                    val span = column.selectFirst("span[title]")
+                    val title = span?.attr("title")?.trim() ?: ""
+
+                    if (rowIndex >= startTimes.size) continue
+
+                    val weekDay = if (colIndex in 1..7) weekDays[colIndex - 1] else "未知"
+                    val startTime = startTimes[rowIndex]
+                    val endTime = endTimes[rowIndex]
+
+                    if (title.isNotEmpty()) {
+                        val parsedData = parseTitle(title)
+                        val courseSchedule = Schedule(
+                            id = "$colIndex$rowIndex",
+                            courseName = parsedData["科目名稱"] ?: "未知課程",
+                            teacherName = parsedData["授課教師"] ?: "未知教師",
+                            location = parsedData["場地"] ?: "其它",
+                            weekDay = weekDay,
+                            startTime = startTime,
+                            endTime = endTime
+                        )
+                        tempDataList.add(courseSchedule)
                     }
                 }
-                current?.let { add(it) }
             }
-        }.also { Log.d("fetchWebData", "Fetched ${it.size} schedules") }
-    } catch (e: Exception) {
-        Log.e("fetchWebData", "Failed to fetch data", e)
-        emptyList()
+
+            // 合併連續時間並在最後調整開始時間
+            val mergedDataList = mutableListOf<Schedule>()
+            tempDataList.groupBy { it.courseName to it.weekDay }.forEach { (key, courses) ->
+                val sortedCourses = courses.sortedBy { it.startTime }
+                var currentStartTime: LocalTime? = null
+                var currentEndTime: LocalTime? = null
+                var currentId: String = sortedCourses.first().id
+
+                for (course in sortedCourses) {
+                    if (currentStartTime == null) {
+                        currentStartTime = course.startTime
+                        currentEndTime = course.endTime
+                    } else if (currentEndTime == course.startTime) {
+                        // 連續時間，更新結束時間
+                        currentEndTime = course.endTime
+                    } else {
+                        mergedDataList.add(
+                            Schedule(
+                                id = currentId,
+                                courseName = key.first,
+                                teacherName = courses.first().teacherName,
+                                location = courses.first().location,
+                                weekDay = key.second,
+                                startTime = currentStartTime.plusMinutes(10),
+                                endTime = currentEndTime!!
+                            )
+                        )
+                        currentStartTime = course.startTime
+                        currentEndTime = course.endTime
+                        currentId = course.id
+                    }
+                }
+                if (currentStartTime != null && currentEndTime != null) {
+                    mergedDataList.add(
+                        Schedule(
+                            id = currentId,
+                            courseName = key.first,
+                            teacherName = courses.first().teacherName,
+                            location = courses.first().location,
+                            weekDay = key.second,
+                            startTime = currentStartTime.plusMinutes(10),
+                            endTime = currentEndTime
+                        )
+                    )
+                }
+            }
+
+            Log.d("fetchWebData", "Final merged data: $mergedDataList")
+            mergedDataList
+        } catch (e: Exception) {
+            Log.e("fetchWebData", "Error fetching data", e)
+            emptyList()
+        }
     }
 }
 
@@ -598,43 +657,18 @@ fun parseTitle(title: String): Map<String, String> {
 }
 
 suspend fun fetchNewData(viewModel: CourseViewModel, cookies: String): Boolean {
-    // 先取得當前所有課程，以保留通知狀態
-    val currentCourses = withContext(Dispatchers.IO) {
-        viewModel.loadAllCourses()
-        viewModel.allCourses.value ?: emptyList()
-    }
-
-    // 建立課程ID到通知狀態的映射
-    val notificationStatusMap = currentCourses.associate { it.id to it.isNotificationEnabled }
-
     val fetchedData = fetchWebData(
         "https://infosys.nttu.edu.tw/n_CourseBase_Select/WeekCourseList.aspx?ItemParam=",
         cookies
     )
-
     return if (fetchedData.isNotEmpty()) {
         withContext(Dispatchers.IO) {
             viewModel.clearAllCourses()
             Log.d("fetchNewData", "All courses cleared")
-
-            // 在插入新資料時保留原來的通知狀態並調整開始時間
             fetchedData.forEach { course ->
-                val notificationStatus = notificationStatusMap[course.id] ?: false
-                // 將開始時間往後調整10分鐘
-                val adjustedStartTime = course.startTime.plusMinutes(10)
-                // 根據新的開始時間調整結束時間（保持課程時長不變）
-                val timeDifference = java.time.Duration.between(course.startTime, course.endTime)
-                val adjustedEndTime = adjustedStartTime.plus(timeDifference)
-
-                val updatedCourse = course.copy(
-                    startTime = adjustedStartTime,
-                    endTime = adjustedEndTime,
-                    isNotificationEnabled = notificationStatus
-                )
-                viewModel.insertCourse(updatedCourse)
-                Log.d("fetchNewData", "Inserted course: $updatedCourse")
+                viewModel.insertCourse(course)
+                Log.d("fetchNewData", "Inserted course: $course")
             }
-
             viewModel.loadAllCourses()
             Log.d("fetchNewData", "Courses loaded")
         }
