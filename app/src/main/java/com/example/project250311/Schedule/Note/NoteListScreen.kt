@@ -1,9 +1,12 @@
+// 儲存位置: app/src/main/java/com/example/project250311/Schedule/Note/NotesScreen.kt
 package com.example.project250311.Schedule.Note
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,6 +21,7 @@ import com.example.project250311.Data.Note
 import com.example.project250311.Data.NoteDatabase
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NotesScreen(navController: NavController) {
     val context = LocalContext.current
@@ -41,130 +45,101 @@ fun NotesScreen(navController: NavController) {
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        Text(
-            text = "筆記列表",
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        Button(
-            onClick = {
-                // 使用導航控制器而不是啟動新的 Activity
-                navController.navigate("note/create")
-            }
-        ) {
-            Text("新增筆記")
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // 顯示錯誤訊息（如果有）
-        errorMessage?.let { message ->
-            Text(
-                text = message,
-                color = Color.Red,
-                fontSize = 16.sp,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-        }
-
-        LazyColumn {
-            items(notes) { note ->
-                Text(
-                    text = note.name,
-                    fontSize = 18.sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            // 使用導航控制器而不是啟動新的 Activity
-                            navController.navigate("note/edit/${note.id}")
-                        }
-                        .padding(8.dp)
-                )
-                Divider(color = Color.Gray, thickness = 1.dp)
-            }
-        }
-    }
-}
-
-@Composable
-fun NoteListScreen(navController: NavController) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val db = NoteDatabase.getDatabase(context)
-    val noteDao = db.noteDao()
-    var notes by remember { mutableStateOf<List<Note>>(emptyList()) }
-
-    // Load notes from database
-    LaunchedEffect(key1 = true) {
-        scope.launch {
-            notes = noteDao.getAllNotes()
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "筆記列表",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold
-            )
-
-            Button(
+    Scaffold(
+        floatingActionButton = {
+            FloatingActionButton(
                 onClick = {
-                    // Navigate to create new note
                     navController.navigate("note_edit")
                 }
             ) {
-                Text("新增筆記")
+                Icon(Icons.Default.Add, contentDescription = "新增筆記")
             }
         }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(16.dp)
+        ) {
+            // 顯示錯誤訊息（如果有）
+            errorMessage?.let { message ->
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp)
+                ) {
+                    Text(
+                        text = message,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        fontSize = 16.sp,
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
+            }
 
-        Divider()
-
-        LazyColumn {
-            items(notes) { note ->
-                NoteItem(note = note, onClick = {
-                    // Navigate to edit existing note
-                    navController.navigate("note_edit/${note.id}")
-                })
+            if (notes.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "尚無筆記",
+                            fontSize = 20.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "點擊右下角 + 按鈕新增筆記",
+                            fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(notes) { note ->
+                        NoteItem(note = note) {
+                            navController.navigate("note_edit/${note.id}")
+                        }
+                    }
+                }
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NoteItem(note: Note, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
             .clickable(onClick = onClick),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 2.dp
+        )
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .padding(16.dp)
         ) {
             Text(
                 text = note.name,
-                fontSize = 18.sp
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
             )
         }
     }
