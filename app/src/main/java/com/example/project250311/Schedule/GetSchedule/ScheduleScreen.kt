@@ -1,0 +1,645 @@
+package com.example.project250311.Schedule.GetSchedule
+
+import android.annotation.SuppressLint
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.app.NotificationManagerCompat
+import com.example.project250311.Data.CourseViewModel
+import com.example.project250311.Data.Schedule
+import kotlinx.coroutines.launch
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import android.webkit.CookieManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import com.example.project250311.Schedule.Notice.NotificationReceiver
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.jsoup.Jsoup
+
+// 用來保存通知狀態的全局變量，這樣在重組時狀態不會丟失
+//private val globalNotificationStates = mutableStateMapOf<String, Boolean>()
+
+@Composable
+fun ScheduleScreen(viewModel: CourseViewModel) {
+    var cookies by remember { mutableStateOf<String?>(null) }
+    val scheduleList by viewModel.allCourses.observeAsState(emptyList())
+    val selectedCourses by viewModel.selectedCourses.observeAsState(null)
+    var isLoading by remember { mutableStateOf(false) }
+    var isDataRefreshing by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+
+    val onCourseSelected = remember(viewModel) { { courses: List<Schedule>? -> viewModel.selectCourses(courses) } }
+    val closeCardView = remember(viewModel) { { viewModel.selectCourses(null) } }
+
+    suspend fun initializeData() {
+        isLoading = true
+        val hasData = viewModel.loadAllCourses()
+        cookies = if (hasData) "existing" else null
+        isLoading = false
+    }
+
+    suspend fun refreshData(newCookies: String) {
+        isDataRefreshing = true
+        val success = fetchNewData(viewModel, newCookies)
+        if (success) {
+            viewModel.loadAllCourses()
+        } else {
+            errorMessage = "無法刷新課程資料，請稍後再試"
+        }
+        isDataRefreshing = false
+    }
+
+    LaunchedEffect(Unit) { initializeData() }
+    LaunchedEffect(cookies) {
+        cookies?.takeIf { it != "existing" }?.let { refreshData(it) }
+    }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets.systemBars
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "課程表",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Button(
+                    onClick = {
+                        coroutineScope.launch {
+                            isLoading = true
+                            cookies = null  // 觸發刷新
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                    modifier = Modifier.padding(end = 8.dp)
+                ) {
+                    if (isLoading || isDataRefreshing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = MaterialTheme.colorScheme.onSecondary
+                        )
+                    } else {
+                        Text("刷新")
+                    }
+                }
+            }
+            errorMessage?.let {
+                Text(
+                    text = it,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+
+            when {
+                cookies == null -> WebViewScreen("https://infosys.nttu.edu.tw/InfoLoginNew.aspx") { cookies = it }
+                isDataRefreshing -> LoadingIndicator()
+                else -> {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                            ScheduleTable(scheduleList, onCourseSelected)
+                        }
+                        selectedCourses?.let { courses ->
+                            Spacer(modifier = Modifier.height(16.dp))
+                            CourseDetailCard(courses, viewModel, onClose = closeCardView, modifier = Modifier.fillMaxWidth().wrapContentHeight())
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LoadingIndicator() {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator()
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("正在載入課程資料...", color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+@Composable
+fun CourseDetailCard(
+    courses: List<Schedule>,
+    viewModel: CourseViewModel,
+    onClose: () -> Unit,  // Add this parameter
+    modifier: Modifier = Modifier
+) {
+    if (courses.isEmpty()) return
+
+    var showEditDialog by remember { mutableStateOf(false) }
+    var newLocation by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+
+    Card(
+        modifier = modifier
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .clickable { showEditDialog = true },
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "課程: ${courses.first().courseName}",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                IconButton(onClick = onClose) {  // Add a close button
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "老師: ${courses.map { it.teacherName }.distinct().joinToString(", ")}",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "地點: ${courses.map { it.location }.distinct().joinToString(", ")}",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "時間安排:",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            courses.forEach { course ->
+                CourseItem(course = course, viewModel = viewModel)
+            }
+        }
+    }
+
+    if (showEditDialog) {
+        AlertDialog(
+            onDismissRequest = { showEditDialog = false },
+            title = { Text("編輯地點") },
+            text = {
+                TextField(
+                    value = newLocation,
+                    onValueChange = { newLocation = it },
+                    label = { Text("輸入新地點") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newLocation.isNotBlank()) {
+                            val updatedLocation = newLocation
+                            scope.launch {
+                                courses.forEach { course ->
+                                    viewModel.updateCourseLocation(course.id, updatedLocation)
+                                }
+                            }
+                            showEditDialog = false
+                            newLocation = ""
+                        }
+                    }
+                ) {
+                    Text("確定")
+                }
+            },
+            dismissButton = {
+                Button(onClick = { showEditDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun ScheduleTable(scheduleList: List<Schedule>, onCourseSelected: (List<Schedule>?) -> Unit) {
+    val timeSlots = remember {
+        listOf("07:00" to "08:00", "08:00" to "09:00", "09:00" to "10:00", "10:00" to "11:00",
+            "11:00" to "12:00", "12:00" to "13:00", "13:00" to "14:00", "14:00" to "15:00",
+            "15:00" to "16:00", "16:00" to "17:00", "17:00" to "18:00", "18:00" to "19:00",
+            "19:00" to "20:00", "20:00" to "21:00", "21:00" to "22:00")
+            .map { LocalTime.parse(it.first) to LocalTime.parse(it.second) }
+    }
+    val weekDays = remember { listOf("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日") }
+    val activeCols = remember(scheduleList) {
+        scheduleList.map { weekDays.indexOf(it.weekDay) + 1 }.filter { it > 0 }.distinct().sorted()
+    }
+    val activeRows = remember(scheduleList) {
+        (0 until timeSlots.size).filter { rowIndex ->
+            scheduleList.any { course ->
+                val (start, end) = timeSlots[rowIndex]
+                course.startTime < end && course.endTime > start
+            }
+        }
+    }
+
+    LazyColumn(modifier = Modifier.fillMaxWidth()) {
+        // Header and empty state as a single item
+        item {
+            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                if (scheduleList.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "尚無課程資料，請點選刷新按鈕",
+                            fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                } else {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shadowElevation = 4.dp
+                    ) {
+                        Column {
+                            Row(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                                Text(
+                                    text = "",
+                                    modifier = Modifier.weight(1f),
+                                    textAlign = TextAlign.Center,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                activeCols.forEach { colIndex ->
+                                    Text(
+                                        text = weekDays[colIndex - 1],
+                                        modifier = Modifier.weight(1f),
+                                        textAlign = TextAlign.Center,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                            if (activeRows.isEmpty()) {
+                                Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = "課程表已載入但無時段資料",
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Rows as lazy items
+        items(count = activeRows.size) { index ->
+            val rowIndex = activeRows[index]
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        if (index % 2 == 0) MaterialTheme.colorScheme.surface
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "第${rowIndex}節",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = "${timeSlots[rowIndex].first.toString().take(5)}-${timeSlots[rowIndex].second.toString().take(5)}",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        textAlign = TextAlign.Center
+                    )
+                }
+                activeCols.forEach { colIndex ->
+                    val (slotStart, slotEnd) = timeSlots[rowIndex]
+                    val weekDay = weekDays[colIndex - 1]
+                    val courseAtSlot = scheduleList.firstOrNull {
+                        it.weekDay == weekDay && it.startTime < slotEnd && it.endTime > slotStart
+                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(60.dp)
+                            .padding(2.dp)
+                            .background(
+                                if (courseAtSlot != null) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                                shape = RoundedCornerShape(4.dp)
+                            )
+                            .clickable(enabled = courseAtSlot != null) {
+                                courseAtSlot?.let {
+                                    onCourseSelected(scheduleList.filter { course -> course.courseName == it.courseName })
+                                }
+                            }
+                            .border(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), RoundedCornerShape(4.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = courseAtSlot?.courseName ?: "",
+                            fontSize = 12.sp,
+                            color = if (courseAtSlot != null) MaterialTheme.colorScheme.onPrimaryContainer else Color.Transparent,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CourseItem(course: Schedule, viewModel: CourseViewModel) {
+    val context = LocalContext.current
+    // 使用課程自身的通知狀態，而非臨時狀態
+    val isNotificationEnabled = course.isNotificationEnabled
+    val scope = rememberCoroutineScope()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "${course.weekDay} ${
+                    course.startTime.format(DateTimeFormatter.ofPattern("HH:mm"))
+                } - ${course.endTime.format(DateTimeFormatter.ofPattern("HH:mm"))}",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Switch(
+            checked = isNotificationEnabled,
+            onCheckedChange = { isEnabled ->
+                scope.launch {
+                    // 更新資料庫中的通知狀態
+                    viewModel.updateNotificationStatus(course.id, isEnabled)
+
+                    if (isEnabled) {
+                        // 如果開啟通知，設定鬧鐘提醒
+                        val alarmTime = course.startTime.minusMinutes(10) // 提前 10 分鐘通知
+                        setNotificationAlarm(context, alarmTime, course)
+                    } else {
+                        // 如果關閉通知，取消提醒
+                        cancelNotification(context, course)
+                    }
+                }
+            }
+        )
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun WebViewScreen(url: String, onLoginSuccess: (String) -> Unit) {
+    AndroidView(factory = { context ->
+        WebView(context).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            CookieManager.getInstance().setAcceptCookie(true)
+
+            webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView, url: String) {
+                    if (url.contains("InfoLoginNew.aspx")) {
+                        view.scrollTo(0, 0)
+                        return
+                    }
+                    val cookies = CookieManager.getInstance().getCookie(url)
+                    onLoginSuccess(cookies ?: "")
+                }
+            }
+            loadUrl(url)
+        }
+    })
+}
+
+fun createNotificationIntent(context: Context, course: Schedule): Intent {
+    return Intent(context, NotificationReceiver::class.java).apply {
+        putExtra("course_id", course.id)
+        putExtra("course_name", course.courseName)
+        putExtra("teacher_name", course.teacherName)
+        putExtra("location", course.location)
+        putExtra("start_time", course.startTime.toString())
+        putExtra("end_time", course.endTime.toString())
+        putExtra("is_notification_enabled", course.isNotificationEnabled)
+    }
+}
+
+fun setNotificationAlarm(context: Context, alarmTime: LocalTime, course: Schedule) {
+    val alarmCalendar = java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.HOUR_OF_DAY, alarmTime.hour)
+        set(java.util.Calendar.MINUTE, alarmTime.minute)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+        val today = get(java.util.Calendar.DAY_OF_WEEK)
+        val courseDayOfWeek = when (course.weekDay) {
+            "星期一" -> java.util.Calendar.MONDAY
+            "星期二" -> java.util.Calendar.TUESDAY
+            "星期三" -> java.util.Calendar.WEDNESDAY
+            "星期四" -> java.util.Calendar.THURSDAY
+            "星期五" -> java.util.Calendar.FRIDAY
+            "星期六" -> java.util.Calendar.SATURDAY
+            "星期日" -> java.util.Calendar.SUNDAY
+            else -> today
+        }
+        var daysToAdd = courseDayOfWeek - today
+        if (daysToAdd <= 0) daysToAdd += 7
+        add(java.util.Calendar.DAY_OF_YEAR, daysToAdd)
+        if (before(java.util.Calendar.getInstance())) add(java.util.Calendar.WEEK_OF_YEAR, 1)
+    }
+
+    val alarmIntent = createNotificationIntent(context, course)
+    val pendingIntent = PendingIntent.getBroadcast(context, course.id.hashCode(), alarmIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+    alarmManager.setExact(AlarmManager.RTC_WAKEUP, alarmCalendar.timeInMillis, pendingIntent)
+    Log.d("AlarmScheduler", "Set alarm for ${course.courseName} at ${alarmCalendar.time}")
+}
+
+fun cancelNotification(context: Context, course: Schedule) {
+    val alarmIntent = createNotificationIntent(context, course)
+    val pendingIntent = PendingIntent.getBroadcast(context, course.id.hashCode(), alarmIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+    alarmManager?.cancel(pendingIntent) ?: Log.e("CancelNotification", "AlarmManager unavailable")
+
+    val notificationId = course.id.hashCode()
+    NotificationManagerCompat.from(context).cancel(notificationId)
+    Log.d("CancelNotification", "Cancelled notification for ${course.courseName}")
+}
+
+suspend fun fetchWebData(url: String, cookies: String?): List<Schedule> = withContext(Dispatchers.IO) {
+    try {
+        val doc = Jsoup.connect(url).header("Cookie", cookies ?: "").userAgent("Mozilla/5.0").timeout(10000).get()
+        val rows = doc.select("table.NTTU_GridView tr").drop(1)
+        val weekDays = listOf("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+        val timeSlots = listOf("07:00" to "08:00", /* ... */ "21:00" to "22:00").map { LocalTime.parse(it.first) to LocalTime.parse(it.second) }
+
+        val schedules = rows.flatMapIndexed { rowIndex, row ->
+            if (rowIndex >= timeSlots.size) return@flatMapIndexed emptyList()
+            val (startTime, endTime) = timeSlots[rowIndex]
+            row.select("td").mapIndexedNotNull { colIndex, column ->
+                val title = column.selectFirst("span[title]")?.attr("title")?.trim() ?: return@mapIndexedNotNull null
+                val weekDay = if (colIndex in 1..7) weekDays[colIndex - 1] else "未知"
+                val parsedData = parseTitle(title)
+                Schedule(
+                    id = "$colIndex$rowIndex",
+                    courseName = parsedData["科目名稱"] ?: "未知課程",
+                    teacherName = parsedData["授課教師"] ?: "未知教師",
+                    location = parsedData["場地"] ?: "其它",
+                    weekDay = weekDay,
+                    startTime = startTime,
+                    endTime = endTime
+                )
+            }
+        }
+
+        // 合併連續時間段
+        schedules.groupBy { it.courseName to it.weekDay }.flatMap { (key, courses) ->
+            val sorted = courses.sortedBy { it.startTime }
+            buildList {
+                var current: Schedule? = null
+                for (course in sorted) {
+                    if (current == null) {
+                        current = course
+                    } else if (current.endTime == course.startTime) {
+                        current = current.copy(endTime = course.endTime)
+                    } else {
+                        add(current)
+                        current = course
+                    }
+                }
+                current?.let { add(it) }
+            }
+        }.also { Log.d("fetchWebData", "Fetched ${it.size} schedules") }
+    } catch (e: Exception) {
+        Log.e("fetchWebData", "Failed to fetch data", e)
+        emptyList()
+    }
+}
+
+fun parseTitle(title: String): Map<String, String> {
+    val regexMap = mapOf(
+        "科目名稱" to """科目名稱：(.+?)\n""",
+        "授課教師" to """授課教師：(.+?)\n""",
+        "場地" to """場地：(.+?)\n"""
+    )
+    val result = mutableMapOf<String, String>()
+    regexMap.forEach { (key, pattern) ->
+        val regex = Regex(pattern)
+        regex.find(title)?.let { match ->
+            result[key] = match.groupValues.drop(1).joinToString(" ").trim()
+        }
+    }
+    return result
+}
+
+suspend fun fetchNewData(viewModel: CourseViewModel, cookies: String): Boolean {
+    // 先取得當前所有課程，以保留通知狀態
+    val currentCourses = withContext(Dispatchers.IO) {
+        viewModel.loadAllCourses()
+        viewModel.allCourses.value ?: emptyList()
+    }
+
+    // 建立課程ID到通知狀態的映射
+    val notificationStatusMap = currentCourses.associate { it.id to it.isNotificationEnabled }
+
+    val fetchedData = fetchWebData(
+        "https://infosys.nttu.edu.tw/n_CourseBase_Select/WeekCourseList.aspx?ItemParam=",
+        cookies
+    )
+
+    return if (fetchedData.isNotEmpty()) {
+        withContext(Dispatchers.IO) {
+            viewModel.clearAllCourses()
+            Log.d("fetchNewData", "All courses cleared")
+
+            // 在插入新資料時保留原來的通知狀態並調整開始時間
+            fetchedData.forEach { course ->
+                val notificationStatus = notificationStatusMap[course.id] ?: false
+                // 將開始時間往後調整10分鐘
+                val adjustedStartTime = course.startTime.plusMinutes(10)
+                // 根據新的開始時間調整結束時間（保持課程時長不變）
+                val timeDifference = java.time.Duration.between(course.startTime, course.endTime)
+                val adjustedEndTime = adjustedStartTime.plus(timeDifference)
+
+                val updatedCourse = course.copy(
+                    startTime = adjustedStartTime,
+                    endTime = adjustedEndTime,
+                    isNotificationEnabled = notificationStatus
+                )
+                viewModel.insertCourse(updatedCourse)
+                Log.d("fetchNewData", "Inserted course: $updatedCourse")
+            }
+
+            viewModel.loadAllCourses()
+            Log.d("fetchNewData", "Courses loaded")
+        }
+        true
+    } else {
+        false
+    }
+}

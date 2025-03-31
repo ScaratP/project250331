@@ -32,7 +32,8 @@ data class Schedule(
     val location: String,
     val weekDay: String,
     val startTime: LocalTime,
-    val endTime: LocalTime
+    val endTime: LocalTime,
+    val isNotificationEnabled: Boolean = false // 新增的通知開關屬性，預設為 false
 )
 
 @Dao
@@ -48,6 +49,9 @@ interface CourseDao {
 
     @Query("DELETE FROM course_table")
     suspend fun clearAllCourses()
+
+    @Query("UPDATE course_table SET isNotificationEnabled = :isEnabled WHERE id = :courseId")
+    suspend fun updateNotificationStatus(courseId: String, isEnabled: Boolean)
 }
 
 class Converters {
@@ -60,9 +64,19 @@ class Converters {
     fun toLocalTime(timeString: String?): LocalTime? {
         return timeString?.let { LocalTime.parse(it) }
     }
+
+    @TypeConverter
+    fun fromBoolean(value: Boolean): Int {
+        return if (value) 1 else 0
+    }
+
+    @TypeConverter
+    fun toBoolean(value: Int): Boolean {
+        return value == 1
+    }
 }
 
-@Database(entities = [Schedule::class], version = 2, exportSchema = false)
+@Database(entities = [Schedule::class], version = 3, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun courseDao(): CourseDao
@@ -77,7 +91,9 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "course_database"
-                ).build()
+                )
+                    .fallbackToDestructiveMigration() // 升級數據庫結構時允許清除舊資料
+                    .build()
                 INSTANCE = instance
                 instance
             }
@@ -91,6 +107,8 @@ class CourseRepository(private val courseDao: CourseDao) {
         courseDao.getCourseByTime(weekDay, startTime)
     suspend fun getAllCourses(): List<Schedule> = courseDao.getAllCourses()
     suspend fun clearAllCourses() = courseDao.clearAllCourses()
+    suspend fun updateNotificationStatus(courseId: String, isEnabled: Boolean) =
+        courseDao.updateNotificationStatus(courseId, isEnabled)
 }
 
 class CourseViewModel(private val repository: CourseRepository) : ViewModel() {
@@ -158,4 +176,32 @@ class CourseViewModel(private val repository: CourseRepository) : ViewModel() {
         }
     }
 
+    // 新增更新通知開關狀態的函數
+    fun updateNotificationStatus(courseId: String, isEnabled: Boolean): Job {
+        return viewModelScope.launch {
+            // 先更新資料庫
+            withContext(Dispatchers.IO) {
+                repository.updateNotificationStatus(courseId, isEnabled)
+            }
+
+            // 接著更新 LiveData
+            val currentCourses = withContext(Dispatchers.Main) {
+                _allCourses.value?.toMutableList() ?: mutableListOf()
+            }
+
+            val updatedCourses = currentCourses.map { course ->
+                if (course.id == courseId) course.copy(isNotificationEnabled = isEnabled) else course
+            }
+
+            _allCourses.value = updatedCourses
+
+            // 如果當前有選中的課程，也需要更新
+            _selectedCourses.value?.let { selected ->
+                val updatedSelected = selected.map { course ->
+                    if (course.id == courseId) course.copy(isNotificationEnabled = isEnabled) else course
+                }
+                _selectedCourses.value = updatedSelected
+            }
+        }
+    }
 }

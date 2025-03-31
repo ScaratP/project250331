@@ -7,13 +7,15 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import com.example.project250311.Schedule.NoSchool.GetLeaveDataActivity
+//import com.example.project250311.Schedule.NoSchool.GetLeaveDataActivity
 
 class NotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        Log.d("NotificationReceiver", "Notification broadcast received")
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(
@@ -21,6 +23,7 @@ class NotificationReceiver : BroadcastReceiver() {
                     android.Manifest.permission.POST_NOTIFICATIONS
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
+                Log.e("NotificationReceiver", "Notification permission not granted")
                 return
             }
         }
@@ -33,9 +36,18 @@ class NotificationReceiver : BroadcastReceiver() {
         val startTime = intent.getStringExtra("start_time") ?: ""
         val endTime = intent.getStringExtra("end_time") ?: ""
 
+        // 檢查通知狀態，如果沒有明確設置為 true，則不顯示通知
+        val isEnabled = intent.getBooleanExtra("is_notification_enabled", false)
+        if (!isEnabled) {
+            Log.d("NotificationReceiver", "Notification is disabled for course: $courseName")
+            return
+        }
+
         val channelId = "notify_id"
         // 使用 courseId 的 hashCode 作為通知的唯一識別碼
         val notificationId = courseId.hashCode()
+
+        Log.d("NotificationReceiver", "Showing notification for course: $courseName")
 
         // 建立查看課表的 PendingIntent（點擊通知後開啟指定網址）
         val url1 = "https://www.notion.so/115-14b63e698496818bb669f9073a87823f"
@@ -46,13 +58,13 @@ class NotificationReceiver : BroadcastReceiver() {
         )
 
         // 建立請假系統的 PendingIntent
-        val leaveIntent = Intent(context, GetLeaveDataActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        }
-        val leavePendingIntent = PendingIntent.getActivity(
-            context, 0, leaveIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+//        val leaveIntent = Intent(context, GetLeaveDataActivity::class.java).apply {
+//            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+//        }
+//        val leavePendingIntent = PendingIntent.getActivity(
+//            context, 0, leaveIntent,
+//            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+//        )
 
         // 使用 BigTextStyle 擴展通知的顯示內容
         val bigTextStyle = NotificationCompat.BigTextStyle()
@@ -60,7 +72,6 @@ class NotificationReceiver : BroadcastReceiver() {
                     "老師名稱: $teacherName\n" +
                     "地點: $location\n" +
                     "時間: $startTime ~ $endTime")
-
 
         // 建立通知內容
         val builder = NotificationCompat.Builder(context, channelId)
@@ -71,7 +82,7 @@ class NotificationReceiver : BroadcastReceiver() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .addAction(android.R.drawable.ic_menu_agenda, "查看課表", schedulePendingIntent)
-            .addAction(android.R.drawable.ic_menu_view, "請假系統", leavePendingIntent)
+//            .addAction(android.R.drawable.ic_menu_view, "請假系統", leavePendingIntent)
 
         // 發送通知
         with(NotificationManagerCompat.from(context)) {

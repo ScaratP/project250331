@@ -86,4 +86,9 @@ dependencies {
     androidTestImplementation ("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation ("androidx.room:room-testing:2.5.0")
     androidTestImplementation ("androidx.arch.core:core-testing:2.2.0")
+
+    implementation ("androidx.navigation:navigation-compose:2.8.9")
+
+    implementation ("androidx.activity:activity-compose:1.10.1")
+    implementation ("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
 }
