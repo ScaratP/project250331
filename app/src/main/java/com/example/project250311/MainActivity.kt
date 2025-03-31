@@ -193,7 +193,7 @@ fun AppNavHost(
 
         // 通知設定
         composable("notice") {
-            NotificationManagerScreen(courseViewModel, navController)
+            NotificationManagerScreen(navController)
         }
 
         // 筆記編輯/新增

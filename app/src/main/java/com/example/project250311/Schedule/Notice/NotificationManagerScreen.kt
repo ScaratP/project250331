@@ -12,7 +12,6 @@ import android.provider.Settings
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
@@ -42,7 +41,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
-import com.example.project250311.Data.CourseViewModel
+import com.example.project250311.Data.AppDatabase
+import com.example.project250311.Data.CourseRepository
 import com.example.project250311.Data.Schedule
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
@@ -54,16 +54,32 @@ import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NotificationManagerScreen(
-    viewModel: CourseViewModel,
-    navController: NavHostController
-) {
-    val scheduleList by viewModel.allCourses.observeAsState(emptyList())
+fun NotificationManagerScreen(navController: NavHostController) {
+    // 直接從數據庫獲取數據，不依賴外部傳入的 ViewModel
     val context = LocalContext.current
+    val db = remember { AppDatabase.getDatabase(context) }
+    val courseDao = remember { db.courseDao() }
+    val repository = remember { CourseRepository(courseDao) }
+
+    // 使用 remember 和 mutableStateOf 來存儲課程列表
+    var scheduleList by remember { mutableStateOf<List<Schedule>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
+
     var showPermissionDialog by remember { mutableStateOf(false) }
     var canScheduleExactAlarms by remember { mutableStateOf(hasExactAlarmPermission(context)) }
     var hasNotificationPermission by remember { mutableStateOf(hasNotificationPermission(context)) }
+
+    // 啟動時加載課程數據
+    LaunchedEffect(Unit) {
+        scope.launch {
+            try {
+                scheduleList = repository.getAllCourses()
+            } finally {
+                isLoading = false
+            }
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -107,73 +123,89 @@ fun NotificationManagerScreen(
             )
         }
     ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 16.dp)
-        ) {
-            // 頂部通知權限狀態指示器
-            NotificationPermissionStatus(
-                hasNotificationPermission = hasNotificationPermission,
-                canScheduleExactAlarms = canScheduleExactAlarms,
-                onRequestPermission = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    } else {
-                        hasNotificationPermission = true
-                    }
-                }
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // 課程通知管理內容
-            if (scheduleList.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "尚未加載任何課程資料",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    sortedGroupedCourses.forEach { (weekDay, courses) ->
-                        item {
-                            Text(
-                                text = weekDay,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp,
-                                modifier = Modifier.padding(vertical = 8.dp)
-                            )
+        if (isLoading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+                    .padding(horizontal = 16.dp)
+            ) {
+                // 頂部通知權限狀態指示器
+                NotificationPermissionStatus(
+                    hasNotificationPermission = hasNotificationPermission,
+                    canScheduleExactAlarms = canScheduleExactAlarms,
+                    onRequestPermission = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            hasNotificationPermission = true
                         }
+                    }
+                )
 
-                        items(courses.sortedBy { it.startTime }) { course ->
-                            CourseNotificationItem(
-                                course = course,
-                                onToggleNotification = { isEnabled ->
-                                    scope.launch {
-                                        // 更新課程通知狀態
-                                        viewModel.updateNotificationStatus(course.id, isEnabled)
+                Spacer(modifier = Modifier.height(8.dp))
 
-                                        if (isEnabled) {
-                                            // 如果開啟通知，設定課程提醒
-                                            val alarmTime = course.startTime.minusMinutes(10) // 提前10分鐘通知
-                                            setNotificationAlarm(context, alarmTime, course, weekDay)
-                                        } else {
-                                            // 如果關閉通知，取消提醒
-                                            cancelNotification(context, course)
+                // 課程通知管理內容
+                if (scheduleList.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "尚未加載任何課程資料",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        sortedGroupedCourses.forEach { (weekDay, courses) ->
+                            item {
+                                Text(
+                                    text = weekDay,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 18.sp,
+                                    modifier = Modifier.padding(vertical = 8.dp)
+                                )
+                            }
+
+                            items(courses.sortedBy { it.startTime }) { course ->
+                                CourseNotificationItem(
+                                    course = course,
+                                    onToggleNotification = { isEnabled ->
+                                        scope.launch {
+                                            // 直接使用 repository 更新通知狀態
+                                            repository.updateNotificationStatus(course.id, isEnabled)
+
+                                            // 更新本地列表中的課程狀態
+                                            scheduleList = scheduleList.map {
+                                                if (it.id == course.id) it.copy(isNotificationEnabled = isEnabled) else it
+                                            }
+
+                                            if (isEnabled) {
+                                                // 如果開啟通知，設定課程提醒
+                                                val alarmTime = course.startTime.minusMinutes(10) // 提前10分鐘通知
+                                                setNotificationAlarm(context, alarmTime, course, weekDay)
+                                            } else {
+                                                // 如果關閉通知，取消提醒
+                                                cancelNotification(context, course)
+                                            }
                                         }
-                                    }
-                                },
-                                hasPermission = hasNotificationPermission && canScheduleExactAlarms
-                            )
+                                    },
+                                    hasPermission = hasNotificationPermission && canScheduleExactAlarms
+                                )
+                            }
                         }
                     }
                 }
@@ -209,6 +241,7 @@ fun NotificationManagerScreen(
     }
 }
 
+// 其餘組件保持原樣
 @Composable
 fun NotificationPermissionStatus(
     hasNotificationPermission: Boolean,
@@ -409,6 +442,7 @@ fun DetailRow(label: String, value: String) {
     }
 }
 
+// 依舊保留原有的輔助函數
 // 檢查是否有通知權限
 fun hasNotificationPermission(context: Context): Boolean {
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
