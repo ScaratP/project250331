@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [Note::class, NoteSegment::class], version = 2, exportSchema = false)
+@Database(entities = [Note::class], version = 5, exportSchema = false) // Incremented to version 5
 abstract class NoteDatabase : RoomDatabase() {
     abstract fun noteDao(): NoteDao
 
@@ -15,24 +15,40 @@ abstract class NoteDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: NoteDatabase? = null
 
-        // 定義從版本 1 到版本 2 的遷移
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(database: SupportSQLiteDatabase) {
-                database.execSQL("""
-                    CREATE TABLE IF NOT EXISTS `note_segments` (
-                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                        `noteId` INTEGER NOT NULL,
-                        `content` TEXT NOT NULL,
-                        `start` INTEGER NOT NULL,
-                        `end` INTEGER NOT NULL,
-                        `fontSize` REAL NOT NULL,
-                        `fontColor` INTEGER NOT NULL,
-                        `backgroundColor` INTEGER NOT NULL,
-                        `isBold` INTEGER NOT NULL,
-                        `isItalic` INTEGER NOT NULL,
-                        FOREIGN KEY(`noteId`) REFERENCES `notes`(`id`) ON DELETE CASCADE
-                    )
-                """.trimIndent())
+                database.execSQL("CREATE TABLE IF NOT EXISTS `notes_new` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `content` TEXT, `timestamp` INTEGER NOT NULL)")
+                database.execSQL("INSERT INTO `notes_new` (`id`, `content`, `timestamp`) SELECT `id`, `content`, `timestamp` FROM `notes`")
+                database.execSQL("DROP TABLE `notes`")
+                database.execSQL("ALTER TABLE `notes_new` RENAME TO `notes`")
+            }
+        }
+
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("CREATE TABLE IF NOT EXISTS `notes_new` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `content` TEXT, `timestamp` INTEGER NOT NULL)")
+                database.execSQL("INSERT INTO `notes_new` (`id`, `content`, `timestamp`) SELECT `id`, `content`, `timestamp` FROM `notes`")
+                database.execSQL("DROP TABLE `notes`")
+                database.execSQL("ALTER TABLE `notes_new` RENAME TO `notes`")
+            }
+        }
+
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("CREATE TABLE IF NOT EXISTS `notes_new` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `content` TEXT, `formattedContent` TEXT, `timestamp` INTEGER NOT NULL)")
+                database.execSQL("INSERT INTO `notes_new` (`id`, `content`, `timestamp`) SELECT `id`, `content`, `timestamp` FROM `notes`")
+                database.execSQL("DROP TABLE `notes`")
+                database.execSQL("ALTER TABLE `notes_new` RENAME TO `notes`")
+            }
+        }
+
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // Since the serialization format has changed, we'll clear the formattedContent to force re-creation
+                database.execSQL("CREATE TABLE IF NOT EXISTS `notes_new` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `content` TEXT, `formattedContent` TEXT, `timestamp` INTEGER NOT NULL)")
+                database.execSQL("INSERT INTO `notes_new` (`id`, `content`, `timestamp`) SELECT `id`, `content`, `timestamp` FROM `notes`")
+                database.execSQL("DROP TABLE `notes`")
+                database.execSQL("ALTER TABLE `notes_new` RENAME TO `notes`")
             }
         }
 
@@ -43,7 +59,7 @@ abstract class NoteDatabase : RoomDatabase() {
                     NoteDatabase::class.java,
                     "note_database"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                 INSTANCE = instance
                 instance

@@ -26,11 +26,10 @@ import androidx.navigation.navArgument
 import com.example.project250311.Data.AppDatabase
 import com.example.project250311.Data.CourseRepository
 import com.example.project250311.Data.CourseViewModel
-import com.example.project250311.Schedule.Note.NoteScreen
 import com.example.project250311.Schedule.GetSchedule.ScheduleScreen
 import com.example.project250311.Schedule.NoSchool.LeaveSystemScreen
-import com.example.project250311.Schedule.Note.NoteViewerScreen
-import com.example.project250311.Schedule.Note.NotesScreen
+import com.example.project250311.Schedule.Note.NoteListScreen
+import com.example.project250311.Schedule.Note.NoteScreen
 import com.example.project250311.Schedule.Notice.NotificationManagerScreen
 import com.example.project250311.ui.theme.Project250311Theme
 import kotlinx.coroutines.launch
@@ -134,7 +133,7 @@ fun AppWithNavigation(
             topBar = {
                 TopAppBar(
                     title = {
-                        Text(items.find { it.route == currentRoute }?.title ?: "學校助手")
+                        Text(items.find { it.route == currentRoute }?.title ?: "便利貼")
                     },
                     navigationIcon = {
                         IconButton(
@@ -189,7 +188,11 @@ fun AppNavHost(
 
         // 筆記列表
         composable("notes") {
-            NotesScreen(navController)
+            NoteListScreen(
+                onNavigateToNoteEditor = {
+                    navController.navigate("note_edit")
+                }
+            )
         }
 
         // 通知設定
@@ -201,28 +204,15 @@ fun AppNavHost(
         composable(
             route = "note_edit",
         ) {
-            val noteId = null
-            NoteScreen(navController, noteId)
-        }
-
-        // 筆記編輯（根據 ID）
-        composable(
-            route = "note_edit/{noteId}",
-            arguments = listOf(navArgument("noteId") { type = NavType.IntType })
-        ) { backStackEntry ->
-            val noteId = backStackEntry.arguments?.getInt("noteId")
-            NoteScreen(navController, noteId)
-        }
-
-        // 筆記查看頁面
-        composable(
-            route = "note_view/{noteId}",
-            arguments = listOf(navArgument("noteId") { type = NavType.IntType })
-        ) { backStackEntry ->
-            val noteId = backStackEntry.arguments?.getInt("noteId")
-            noteId?.let {
-                NoteViewerScreen(navController, it)
-            }
+            NoteScreen(
+                onNavigateToNoteList = {
+                    navController.navigate("notes") {
+                        popUpTo("notes") {
+                            inclusive = true
+                        }
+                    }
+                }
+            )
         }
     }
 }

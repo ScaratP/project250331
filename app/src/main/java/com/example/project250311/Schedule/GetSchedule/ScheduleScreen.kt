@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import android.app.NotificationChannel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,6 +41,12 @@ import com.example.project250311.Schedule.Notice.NotificationReceiver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
+import androidx.core.app.ActivityCompat
+import android.app.Activity
+import android.app.NotificationManager
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
 
 // 用來保存通知狀態的全局變量，這樣在重組時狀態不會丟失
 //private val globalNotificationStates = mutableStateMapOf<String, Boolean>()
@@ -293,7 +300,7 @@ fun ScheduleTable(scheduleList: List<Schedule>, onCourseSelected: (List<Schedule
                 if (scheduleList.isEmpty()) {
                     Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
                         Text(
-                            text = "尚無課程資料，請點選刷新按鈕",
+                            text = "正在努力放入資料，先去其他地方看看吧！",
                             fontSize = 16.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -478,6 +485,39 @@ fun WebViewScreen(url: String, onLoginSuccess: (String) -> Unit) {
     })
 }
 
+fun createNotificationChannel(context: Context) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { //判斷版本是否在API26以上
+        val channelId = "notify_id" //通道的唯一辨識符號
+        val channelName = "通知通道" //顯示給使用者的通知名稱
+        val channelDescription = "這是APP的通知通道" //用來描述通道的用途
+        val importance = NotificationManager.IMPORTANCE_HIGH //通知優先順序
+        val channel = NotificationChannel(channelId, channelName, importance).apply { //創建新的通知通道
+            description = channelDescription //設定通知描述
+        }
+        //取得NotificationManager並建立通知通道
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager //取得系統通知管理氣
+        notificationManager.createNotificationChannel(channel) //註冊通知通道
+    }
+}
+
+fun requestNotificationPermission(activity: Activity) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        if (ContextCompat.checkSelfPermission(
+                activity,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            // 如果沒有權限，請求權限
+            ActivityCompat.requestPermissions(
+                activity,
+                arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                1001
+            )
+            return
+        }
+    }
+}
+
 fun createNotificationIntent(context: Context, course: Schedule): Intent {
     return Intent(context, NotificationReceiver::class.java).apply {
         putExtra("course_id", course.id)
@@ -486,16 +526,22 @@ fun createNotificationIntent(context: Context, course: Schedule): Intent {
         putExtra("location", course.location)
         putExtra("start_time", course.startTime.toString())
         putExtra("end_time", course.endTime.toString())
-        putExtra("is_notification_enabled", course.isNotificationEnabled)
+        // 保留 isNotificationEnabled 屬性以供參考
+        if (course::class.java.declaredFields.any { it.name == "isNotificationEnabled" }) {
+            putExtra("is_notification_enabled", course.isNotificationEnabled)
+        }
     }
 }
 
 fun setNotificationAlarm(context: Context, alarmTime: LocalTime, course: Schedule) {
+    // 基於 Activity 的實現，但加入星期幾處理邏輯
     val alarmCalendar = java.util.Calendar.getInstance().apply {
         set(java.util.Calendar.HOUR_OF_DAY, alarmTime.hour)
         set(java.util.Calendar.MINUTE, alarmTime.minute)
         set(java.util.Calendar.SECOND, 0)
         set(java.util.Calendar.MILLISECOND, 0)
+
+        // 加入 ScheduleScreen 的星期幾處理邏輯
         val today = get(java.util.Calendar.DAY_OF_WEEK)
         val courseDayOfWeek = when (course.weekDay) {
             "星期一" -> java.util.Calendar.MONDAY
@@ -510,24 +556,49 @@ fun setNotificationAlarm(context: Context, alarmTime: LocalTime, course: Schedul
         var daysToAdd = courseDayOfWeek - today
         if (daysToAdd <= 0) daysToAdd += 7
         add(java.util.Calendar.DAY_OF_YEAR, daysToAdd)
-        if (before(java.util.Calendar.getInstance())) add(java.util.Calendar.WEEK_OF_YEAR, 1)
+
+        // 如果計算出來的時間已經過去，則設為下一週
+        if (before(java.util.Calendar.getInstance())) {
+            add(java.util.Calendar.WEEK_OF_YEAR, 1)
+        }
     }
 
+    // 使用 createNotificationIntent 函數來創建 Intent
     val alarmIntent = createNotificationIntent(context, course)
-    val pendingIntent = PendingIntent.getBroadcast(context, course.id.hashCode(), alarmIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+    // 使用 Activity 中的 PendingIntent 創建方式
+    val pendingIntent = PendingIntent.getBroadcast(
+        context,
+        course.id.hashCode(),
+        alarmIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    // 使用 Activity 中的 AlarmManager 設置鬧鐘
     val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
     alarmManager.setExact(AlarmManager.RTC_WAKEUP, alarmCalendar.timeInMillis, pendingIntent)
+
+    // 加入 ScheduleScreen 中的日誌記錄
     Log.d("AlarmScheduler", "Set alarm for ${course.courseName} at ${alarmCalendar.time}")
 }
 
 fun cancelNotification(context: Context, course: Schedule) {
+    // 首先取消鬧鐘，使用 ScheduleScreen 的邏輯
     val alarmIntent = createNotificationIntent(context, course)
-    val pendingIntent = PendingIntent.getBroadcast(context, course.id.hashCode(), alarmIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    val pendingIntent = PendingIntent.getBroadcast(
+        context,
+        course.id.hashCode(),
+        alarmIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
     val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
-    alarmManager?.cancel(pendingIntent) ?: Log.e("CancelNotification", "AlarmManager unavailable")
+    alarmManager?.cancel(pendingIntent)
 
+    // 然後取消通知，使用 Activity 的邏輯但修正函數名稱拼寫
     val notificationId = course.id.hashCode()
     NotificationManagerCompat.from(context).cancel(notificationId)
+
+    // 加入 ScheduleScreen 中的日誌記錄
     Log.d("CancelNotification", "Cancelled notification for ${course.courseName}")
 }
 
@@ -568,6 +639,7 @@ suspend fun fetchWebData(url: String, cookies: String?): List<Schedule> {
                     val startTime = startTimes[rowIndex]
                     val endTime = endTimes[rowIndex]
 
+                    //如果不為空，解析後存入
                     if (title.isNotEmpty()) {
                         val parsedData = parseTitle(title)
                         val courseSchedule = Schedule(
