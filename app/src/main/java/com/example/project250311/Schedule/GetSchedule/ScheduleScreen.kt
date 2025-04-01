@@ -180,6 +180,7 @@ fun CourseDetailCard(
     var newLocation by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
+
     Card(
         modifier = modifier
             .padding(horizontal = 16.dp, vertical = 8.dp)

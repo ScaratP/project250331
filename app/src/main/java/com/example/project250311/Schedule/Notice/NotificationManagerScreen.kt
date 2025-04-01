@@ -28,12 +28,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.graphics.Color
+import java.time.temporal.ChronoUnit
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -48,6 +47,7 @@ import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
+import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.*
@@ -479,11 +479,13 @@ fun getPermissionStatusText(hasNotificationPermission: Boolean, canScheduleExact
     }
 }
 
-// 獲取下次通知時間文字描述
+// 優化後的下次通知時間文字描述計算函數
 fun getNextNotificationTimeText(weekDay: String, startTime: LocalTime): String {
     val today = LocalDate.now()
+    val now = LocalDateTime.now()
     val currentDayOfWeek = today.dayOfWeek
 
+    // 將中文星期轉換為 DayOfWeek 枚舉
     val targetDayOfWeek = when (weekDay) {
         "星期一" -> DayOfWeek.MONDAY
         "星期二" -> DayOfWeek.TUESDAY
@@ -491,21 +493,46 @@ fun getNextNotificationTimeText(weekDay: String, startTime: LocalTime): String {
         "星期四" -> DayOfWeek.THURSDAY
         "星期五" -> DayOfWeek.FRIDAY
         "星期六" -> DayOfWeek.SATURDAY
-        "星期日" -> DayOfWeek.SUNDAY
+        "星期日", "星期天" -> DayOfWeek.SUNDAY
         else -> currentDayOfWeek
     }
 
+    // 計算到下一個課程日的天數
     var daysToAdd = targetDayOfWeek.value - currentDayOfWeek.value
-    if (daysToAdd <= 0) {
-        // 如果是今天或已經過去的日子，計算到下週的時間
+
+    // 如果今天就是課程日，且現在的時間還沒超過提醒時間，則不需要加7天
+    val notificationTime = startTime.minusMinutes(10)
+    val currentTimeOfDay = LocalTime.now()
+
+    if (daysToAdd == 0) {
+        // 今天就是課程日，檢查時間是否已過
+        if (currentTimeOfDay.isAfter(notificationTime)) {
+            // 今天的提醒時間已過，設置為下週同一天
+            daysToAdd = 7
+        }
+    } else if (daysToAdd < 0) {
+        // 課程日在下週
         daysToAdd += 7
     }
 
+    // 計算下次通知的確切日期
     val nextNotificationDate = today.plusDays(daysToAdd.toLong())
+    val nextNotificationDateTime = LocalDateTime.of(nextNotificationDate, notificationTime)
 
-    return "下次提醒: ${nextNotificationDate.month.getDisplayName(TextStyle.SHORT, Locale.getDefault())} " +
-            "${nextNotificationDate.dayOfMonth}日 (${weekDay.substring(2)}) " +
-            "${startTime.minusMinutes(10).format(DateTimeFormatter.ofPattern("HH:mm"))}"
+    // 計算時間差
+    val diffDays = ChronoUnit.DAYS.between(today, nextNotificationDate).toInt()
+
+    // 根據時間差生成友好的文字描述
+    val timeDescription = when {
+        diffDays == 0 -> "今天"
+        diffDays == 1 -> "明天"
+        diffDays == 2 -> "後天"
+        diffDays < 7 -> "本週${weekDay.substring(2)}"
+        diffDays < 14 -> "下週${weekDay.substring(2)}"
+        else -> "${nextNotificationDate.month.getDisplayName(TextStyle.SHORT, Locale.getDefault())} ${nextNotificationDate.dayOfMonth}日 (${weekDay.substring(2)})"
+    }
+
+    return "下次提醒: $timeDescription ${notificationTime.format(DateTimeFormatter.ofPattern("HH:mm"))}"
 }
 
 // 設定課程通知鬧鐘
