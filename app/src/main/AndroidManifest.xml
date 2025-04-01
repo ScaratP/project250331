@@ -23,17 +23,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity android:name=".Schedule.GetSchedule.GetScheduleActivity"/>
-        <activity android:name=".Schedule.Notice.NoticeActivity"/>
-        <activity android:name=".Schedule.NoSchool.GetLeaveDataActivity"/>
-        <activity android:name=".Schedule.NoSchool.LeaveActivity"/>
-        <activity android:name=".Schedule.NoSchool.HistoryActivity"/>
-        <activity android:name=".Schedule.Note.NoteActivity"/>
-        <activity android:name=".Schedule.Note.NoteListActivity"/>
+
 
         <receiver
             android:name=".Schedule.Notice.NotificationReceiver"
-            android:exported="false"/>
+            android:exported="true"/>
 
 
 

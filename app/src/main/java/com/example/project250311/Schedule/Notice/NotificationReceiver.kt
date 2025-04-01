@@ -1,5 +1,6 @@
 package com.example.project250311.Schedule.Notice
 
+import android.Manifest
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -16,12 +17,26 @@ import com.example.project250311.MainActivity
 
 class NotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        // 記錄廣播接收的詳細信息
-        logReceivedIntent(intent)
+        // 詳細日誌記錄
+        Log.d("NotificationReceiver", "Notification broadcast received")
 
-        // 檢查通知權限
+        // 記錄所有 Intent 額外資訊
+        intent.extras?.keySet()?.forEach { key ->
+            Log.d("NotificationReceiver", "Extra: $key = ${intent.extras?.get(key)}")
+        }
+
+        // 檢查權限並詳細記錄
         if (!checkNotificationPermission(context)) {
-            Log.e("NotificationReceiver", "Cannot send notification due to permission issues")
+            Log.e("NotificationReceiver", "Notification permission denied")
+            return
+        }
+
+        // 檢查通知是否已啟用
+        val isNotificationEnabled = intent.getBooleanExtra("is_notification_enabled", false)
+        Log.d("NotificationReceiver", "Notification enabled: $isNotificationEnabled")
+
+        if (!isNotificationEnabled) {
+            Log.e("NotificationReceiver", "Notifications are disabled for this course")
             return
         }
 
@@ -107,14 +122,6 @@ class NotificationReceiver : BroadcastReceiver() {
             }
         }
         return true
-    }
-
-    // 記錄接收到的 Intent 內容
-    private fun logReceivedIntent(intent: Intent) {
-        Log.d("NotificationReceiver", "Notification broadcast received")
-        intent.extras?.keySet()?.forEach { key ->
-            Log.d("NotificationReceiver", "Extra: $key = ${intent.extras?.get(key)}")
-        }
     }
 
     // 嘗試開啟通知設定頁面

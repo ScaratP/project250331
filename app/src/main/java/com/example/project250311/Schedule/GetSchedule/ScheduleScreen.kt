@@ -47,6 +47,9 @@ import android.app.NotificationManager
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.util.Calendar
 
 // 用來保存通知狀態的全局變量，這樣在重組時狀態不會丟失
 //private val globalNotificationStates = mutableStateMapOf<String, Boolean>()
@@ -424,6 +427,7 @@ fun CourseItem(course: Schedule, viewModel: CourseViewModel) {
     // 使用課程自身的通知狀態，而非臨時狀態
     val isNotificationEnabled = course.isNotificationEnabled
     val scope = rememberCoroutineScope()
+    val today = LocalDate.now()
 
     Row(
         modifier = Modifier
@@ -451,7 +455,7 @@ fun CourseItem(course: Schedule, viewModel: CourseViewModel) {
                     if (isEnabled) {
                         // 如果開啟通知，設定鬧鐘提醒
                         val alarmTime = course.startTime.minusMinutes(10) // 提前 10 分鐘通知
-                        setNotificationAlarm(context, alarmTime, course)
+                        setNotificationAlarm(context, alarmTime, course, today.dayOfWeek.toString())
                     } else {
                         // 如果關閉通知，取消提醒
                         cancelNotification(context, course)
@@ -534,40 +538,59 @@ fun createNotificationIntent(context: Context, course: Schedule): Intent {
     }
 }
 
-fun setNotificationAlarm(context: Context, alarmTime: LocalTime, course: Schedule) {
-    // 基於 Activity 的實現，但加入星期幾處理邏輯
-    val alarmCalendar = java.util.Calendar.getInstance().apply {
-        set(java.util.Calendar.HOUR_OF_DAY, alarmTime.hour)
-        set(java.util.Calendar.MINUTE, alarmTime.minute)
-        set(java.util.Calendar.SECOND, 0)
-        set(java.util.Calendar.MILLISECOND, 0)
+fun setNotificationAlarm(context: Context, alarmTime: LocalTime, course: Schedule, weekDay: String) {
+    Log.d("AlarmScheduler", "Setting alarm for course: ${course.courseName}")
+    Log.d("AlarmScheduler", "Alarm time: $alarmTime")
+    Log.d("AlarmScheduler", "Week day: $weekDay")
+    Log.d("AlarmScheduler", "Course details: $course")
 
-        // 加入 ScheduleScreen 的星期幾處理邏輯
-        val today = get(java.util.Calendar.DAY_OF_WEEK)
-        val courseDayOfWeek = when (course.weekDay) {
-            "星期一" -> java.util.Calendar.MONDAY
-            "星期二" -> java.util.Calendar.TUESDAY
-            "星期三" -> java.util.Calendar.WEDNESDAY
-            "星期四" -> java.util.Calendar.THURSDAY
-            "星期五" -> java.util.Calendar.FRIDAY
-            "星期六" -> java.util.Calendar.SATURDAY
-            "星期日" -> java.util.Calendar.SUNDAY
-            else -> today
-        }
-        var daysToAdd = courseDayOfWeek - today
-        if (daysToAdd <= 0) daysToAdd += 7
-        add(java.util.Calendar.DAY_OF_YEAR, daysToAdd)
+    val today = LocalDate.now()
+    val currentDayOfWeek = today.dayOfWeek
 
-        // 如果計算出來的時間已經過去，則設為下一週
-        if (before(java.util.Calendar.getInstance())) {
-            add(java.util.Calendar.WEEK_OF_YEAR, 1)
-        }
+    val targetDayOfWeek = when (weekDay) {
+        "星期一" -> DayOfWeek.of(1)  // Monday is 1 in java.time
+        "星期二" -> DayOfWeek.of(2)  // Tuesday is 2
+        "星期三" -> DayOfWeek.of(3)  // Wednesday is 3
+        "星期四" -> DayOfWeek.of(4)  // Thursday is 4
+        "星期五" -> DayOfWeek.of(5)  // Friday is 5
+        "星期六" -> DayOfWeek.of(6)  // Saturday is 6
+        "星期日" -> DayOfWeek.of(7)  // Sunday is 7
+        else -> currentDayOfWeek
     }
 
-    // 使用 createNotificationIntent 函數來創建 Intent
-    val alarmIntent = createNotificationIntent(context, course)
+    val alarmCalendar = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, alarmTime.hour)
+        set(Calendar.MINUTE, alarmTime.minute)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
 
-    // 使用 Activity 中的 PendingIntent 創建方式
+        var daysToAdd = targetDayOfWeek.value - currentDayOfWeek.value
+        if (daysToAdd < 0 || (daysToAdd == 0 && Calendar.getInstance().get(Calendar.HOUR_OF_DAY) > alarmTime.hour)) {
+            daysToAdd += 7
+        }
+
+        Log.d("AlarmScheduler", "Days to add: $daysToAdd")
+        Log.d("AlarmScheduler", "Current hour: ${Calendar.getInstance().get(Calendar.HOUR_OF_DAY)}")
+        Log.d("AlarmScheduler", "Alarm hour: ${alarmTime.hour}")
+
+        add(Calendar.DAY_OF_YEAR, daysToAdd)
+    }
+
+    Log.d("AlarmScheduler", "Alarm time in millis: ${alarmCalendar.timeInMillis}")
+    Log.d("AlarmScheduler", "Alarm date: ${alarmCalendar.time}")
+
+    val alarmIntent = Intent(context, NotificationReceiver::class.java).apply {
+        putExtra("course_id", course.id)
+        putExtra("course_name", course.courseName)
+        putExtra("teacher_name", course.teacherName)
+        putExtra("location", course.location)
+        putExtra("start_time", course.startTime.toString())
+        putExtra("end_time", course.endTime.toString())
+        putExtra("is_notification_enabled", true)
+        // 額外加入 weekDay 資訊，幫助追蹤
+        putExtra("week_day", weekDay)
+    }
+
     val pendingIntent = PendingIntent.getBroadcast(
         context,
         course.id.hashCode(),
@@ -575,12 +598,16 @@ fun setNotificationAlarm(context: Context, alarmTime: LocalTime, course: Schedul
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
-    // 使用 Activity 中的 AlarmManager 設置鬧鐘
-    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
-    alarmManager.setExact(AlarmManager.RTC_WAKEUP, alarmCalendar.timeInMillis, pendingIntent)
+    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
 
-    // 加入 ScheduleScreen 中的日誌記錄
-    Log.d("AlarmScheduler", "Set alarm for ${course.courseName} at ${alarmCalendar.time}")
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val canScheduleExactAlarms = alarmManager?.canScheduleExactAlarms() ?: false
+        Log.d("AlarmScheduler", "Can schedule exact alarms: $canScheduleExactAlarms")
+    }
+
+    alarmManager?.setExact(AlarmManager.RTC_WAKEUP, alarmCalendar.timeInMillis, pendingIntent)
+
+    Log.d("AlarmScheduler", "Alarm set successfully for course: ${course.courseName}")
 }
 
 fun cancelNotification(context: Context, course: Schedule) {

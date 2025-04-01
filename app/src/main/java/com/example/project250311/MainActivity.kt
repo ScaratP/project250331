@@ -1,5 +1,9 @@
 package com.example.project250311
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -12,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat.getSystemService
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.NavController
@@ -48,9 +53,13 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+
+
         super.onCreate(savedInstanceState)
+        createNotificationChannel(this)
         setContent {
             Project250311Theme {
+
                 // 將 startDestination 傳遞給函數
                 val startDestination =
                     if (intent?.getBooleanExtra("OPEN_SCHEDULE", false) == true) "schedule"
@@ -62,6 +71,23 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+}
+
+private fun createNotificationChannel(context: Context) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val channelId = "notify_id"
+        val channelName = "課程通知"
+        val channelDescription = "課程上課前提醒"
+        val importance = NotificationManager.IMPORTANCE_HIGH
+        val channel = NotificationChannel(channelId, channelName, importance).apply {
+            description = channelDescription
+            enableVibration(true)
+            vibrationPattern = longArrayOf(100, 200, 300, 400)
+        }
+
+        val notificationManager = getSystemService(context, NotificationManager::class.java)
+        notificationManager?.createNotificationChannel(channel)
     }
 }
 
