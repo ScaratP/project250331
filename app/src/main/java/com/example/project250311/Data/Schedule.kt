@@ -21,7 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.LocalDateTime
+import java.time.LocalDate
 import java.time.LocalTime
 
 @Entity(tableName = "course_table")
@@ -30,10 +30,11 @@ data class Schedule(
     val courseName: String,
     val teacherName: String,
     val location: String,
-    val weekDay: String,
+    val weekDay: String,// 星期幾，例如 "Monday"
     val startTime: LocalTime,
     val endTime: LocalTime,
-    val isNotificationEnabled: Boolean = false // 新增的通知開關屬性，預設為 false
+    val courseDates: List<LocalDate>,// 每門課程的日期清單
+    val isNotificationEnabled: Boolean = false // 從 250311 中保留的通知開關
 )
 
 @Dao
@@ -52,6 +53,9 @@ interface CourseDao {
 
     @Query("UPDATE course_table SET isNotificationEnabled = :isEnabled WHERE id = :courseId")
     suspend fun updateNotificationStatus(courseId: String, isEnabled: Boolean)
+
+    @Query("SELECT * FROM course_table WHERE isNotificationEnabled = 1")
+    suspend fun getAllCoursesWithNotificationsEnabled(): List<Schedule>
 }
 
 class Converters {
@@ -73,6 +77,16 @@ class Converters {
     @TypeConverter
     fun toBoolean(value: Int): Boolean {
         return value == 1
+    }
+
+    @TypeConverter
+    fun fromLocalDateList(dates: List<LocalDate>?): String? {
+        return dates?.joinToString(",") { it.toString() }
+    }
+
+    @TypeConverter
+    fun toLocalDateList(datesString: String?): List<LocalDate>? {
+        return datesString?.split(",")?.map { LocalDate.parse(it) }
     }
 }
 
@@ -109,6 +123,8 @@ class CourseRepository(private val courseDao: CourseDao) {
     suspend fun clearAllCourses() = courseDao.clearAllCourses()
     suspend fun updateNotificationStatus(courseId: String, isEnabled: Boolean) =
         courseDao.updateNotificationStatus(courseId, isEnabled)
+    suspend fun getAllCoursesWithNotificationsEnabled(): List<Schedule> =
+        courseDao.getAllCoursesWithNotificationsEnabled()
 }
 
 class CourseViewModel(private val repository: CourseRepository) : ViewModel() {

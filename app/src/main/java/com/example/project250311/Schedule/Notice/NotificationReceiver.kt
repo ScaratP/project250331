@@ -1,7 +1,5 @@
 package com.example.project250311.Schedule.Notice
 
-import android.Manifest
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -31,15 +29,6 @@ class NotificationReceiver : BroadcastReceiver() {
             return
         }
 
-        // 檢查通知是否已啟用
-        val isNotificationEnabled = intent.getBooleanExtra("is_notification_enabled", false)
-        Log.d("NotificationReceiver", "Notification enabled: $isNotificationEnabled")
-
-        if (!isNotificationEnabled) {
-            Log.e("NotificationReceiver", "Notifications are disabled for this course")
-            return
-        }
-
         // 從 Intent 中取得傳遞過來的課程資訊
         val courseId = intent.getStringExtra("course_id") ?: "0"
         val courseName = intent.getStringExtra("course_name") ?: "未知課程"
@@ -47,6 +36,14 @@ class NotificationReceiver : BroadcastReceiver() {
         val location = intent.getStringExtra("location") ?: ""
         val startTime = intent.getStringExtra("start_time") ?: ""
         val endTime = intent.getStringExtra("end_time") ?: ""
+        val isNotificationEnabled = intent.getBooleanExtra("is_notification_enabled", false)
+
+        // 檢查通知是否已啟用
+        Log.d("NotificationReceiver", "Notification enabled: $isNotificationEnabled")
+        if (!isNotificationEnabled) {
+            Log.e("NotificationReceiver", "Notifications are disabled for this course")
+            return
+        }
 
         val channelId = "notify_id"
         // 使用 courseId 的 hashCode 作為通知的唯一識別碼

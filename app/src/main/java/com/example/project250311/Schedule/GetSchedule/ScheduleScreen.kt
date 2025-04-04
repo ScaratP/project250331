@@ -47,8 +47,12 @@ import android.app.NotificationManager
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
+import com.example.project250311.Schedule.Notice.NotificationUtils.cancelNotification
+import com.example.project250311.Schedule.Notice.NotificationUtils.getCourseDates
+import com.example.project250311.Schedule.Notice.NotificationUtils.setNotificationAlarm
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.temporal.TemporalAdjusters
 import java.util.Calendar
 
 // 用來保存通知狀態的全局變量，這樣在重組時狀態不會丟失
@@ -145,12 +149,23 @@ fun ScheduleScreen(viewModel: CourseViewModel) {
                 isDataRefreshing -> LoadingIndicator()
                 else -> {
                     Column(modifier = Modifier.fillMaxSize()) {
-                        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                        ) {
                             ScheduleTable(scheduleList, onCourseSelected)
                         }
                         selectedCourses?.let { courses ->
                             Spacer(modifier = Modifier.height(16.dp))
-                            CourseDetailCard(courses, viewModel, onClose = closeCardView, modifier = Modifier.fillMaxWidth().wrapContentHeight())
+                            CourseDetailCard(
+                                courses = courses,
+                                viewModel = viewModel,
+                                onClose = closeCardView,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .wrapContentHeight()
+                            )
                         }
                     }
                 }
@@ -174,7 +189,7 @@ fun LoadingIndicator() {
 fun CourseDetailCard(
     courses: List<Schedule>,
     viewModel: CourseViewModel,
-    onClose: () -> Unit,  // Add this parameter
+    onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     if (courses.isEmpty()) return
@@ -182,7 +197,6 @@ fun CourseDetailCard(
     var showEditDialog by remember { mutableStateOf(false) }
     var newLocation by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
-
 
     Card(
         modifier = modifier
@@ -204,7 +218,7 @@ fun CourseDetailCard(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
                 )
-                IconButton(onClick = onClose) {  // Add a close button
+                IconButton(onClick = onClose) {
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Close",
@@ -302,7 +316,12 @@ fun ScheduleTable(scheduleList: List<Schedule>, onCourseSelected: (List<Schedule
         item {
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 if (scheduleList.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
                         Text(
                             text = "正在努力放入資料，先去其他地方看看吧！",
                             fontSize = 16.sp,
@@ -318,7 +337,11 @@ fun ScheduleTable(scheduleList: List<Schedule>, onCourseSelected: (List<Schedule
                         shadowElevation = 4.dp
                     ) {
                         Column {
-                            Row(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp)
+                            ) {
                                 Text(
                                     text = "",
                                     modifier = Modifier.weight(1f),
@@ -337,7 +360,12 @@ fun ScheduleTable(scheduleList: List<Schedule>, onCourseSelected: (List<Schedule
                                 }
                             }
                             if (activeRows.isEmpty()) {
-                                Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(100.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
                                     Text(
                                         text = "課程表已載入但無時段資料",
                                         fontSize = 14.sp,
@@ -403,7 +431,11 @@ fun ScheduleTable(scheduleList: List<Schedule>, onCourseSelected: (List<Schedule
                                     onCourseSelected(scheduleList.filter { course -> course.courseName == it.courseName })
                                 }
                             }
-                            .border(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), RoundedCornerShape(4.dp)),
+                            .border(
+                                0.5.dp,
+                                MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                                RoundedCornerShape(4.dp)
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -424,10 +456,9 @@ fun ScheduleTable(scheduleList: List<Schedule>, onCourseSelected: (List<Schedule
 @Composable
 fun CourseItem(course: Schedule, viewModel: CourseViewModel) {
     val context = LocalContext.current
-    // 使用課程自身的通知狀態，而非臨時狀態
+    // 使用課程自身的通知狀態
     val isNotificationEnabled = course.isNotificationEnabled
     val scope = rememberCoroutineScope()
-    val today = LocalDate.now()
 
     Row(
         modifier = Modifier
@@ -449,15 +480,13 @@ fun CourseItem(course: Schedule, viewModel: CourseViewModel) {
             checked = isNotificationEnabled,
             onCheckedChange = { isEnabled ->
                 scope.launch {
-                    // 更新資料庫中的通知狀態
                     viewModel.updateNotificationStatus(course.id, isEnabled)
-
                     if (isEnabled) {
-                        // 如果開啟通知，設定鬧鐘提醒
-                        val alarmTime = course.startTime.minusMinutes(10) // 提前 10 分鐘通知
-                        setNotificationAlarm(context, alarmTime, course, today.dayOfWeek.toString())
+                        // 設置通知
+                        val alarmTime = course.startTime.minusMinutes(10)
+                        setNotificationAlarm(context, alarmTime, course, course.weekDay)
                     } else {
-                        // 如果關閉通知，取消提醒
+                        // 取消通知
                         cancelNotification(context, course)
                     }
                 }
@@ -488,146 +517,6 @@ fun WebViewScreen(url: String, onLoginSuccess: (String) -> Unit) {
             loadUrl(url)
         }
     })
-}
-
-fun createNotificationChannel(context: Context) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { //判斷版本是否在API26以上
-        val channelId = "notify_id" //通道的唯一辨識符號
-        val channelName = "通知通道" //顯示給使用者的通知名稱
-        val channelDescription = "這是APP的通知通道" //用來描述通道的用途
-        val importance = NotificationManager.IMPORTANCE_HIGH //通知優先順序
-        val channel = NotificationChannel(channelId, channelName, importance).apply { //創建新的通知通道
-            description = channelDescription //設定通知描述
-        }
-        //取得NotificationManager並建立通知通道
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager //取得系統通知管理氣
-        notificationManager.createNotificationChannel(channel) //註冊通知通道
-    }
-}
-
-fun requestNotificationPermission(activity: Activity) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        if (ContextCompat.checkSelfPermission(
-                activity,
-                android.Manifest.permission.POST_NOTIFICATIONS
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            // 如果沒有權限，請求權限
-            ActivityCompat.requestPermissions(
-                activity,
-                arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
-                1001
-            )
-            return
-        }
-    }
-}
-
-fun createNotificationIntent(context: Context, course: Schedule): Intent {
-    return Intent(context, NotificationReceiver::class.java).apply {
-        putExtra("course_id", course.id)
-        putExtra("course_name", course.courseName)
-        putExtra("teacher_name", course.teacherName)
-        putExtra("location", course.location)
-        putExtra("start_time", course.startTime.toString())
-        putExtra("end_time", course.endTime.toString())
-        // 保留 isNotificationEnabled 屬性以供參考
-        if (course::class.java.declaredFields.any { it.name == "isNotificationEnabled" }) {
-            putExtra("is_notification_enabled", course.isNotificationEnabled)
-        }
-    }
-}
-
-fun setNotificationAlarm(context: Context, alarmTime: LocalTime, course: Schedule, weekDay: String) {
-    Log.d("AlarmScheduler", "Setting alarm for course: ${course.courseName}")
-    Log.d("AlarmScheduler", "Alarm time: $alarmTime")
-    Log.d("AlarmScheduler", "Week day: $weekDay")
-    Log.d("AlarmScheduler", "Course details: $course")
-
-    val today = LocalDate.now()
-    val currentDayOfWeek = today.dayOfWeek
-
-    val targetDayOfWeek = when (weekDay) {
-        "星期一" -> DayOfWeek.of(1)  // Monday is 1 in java.time
-        "星期二" -> DayOfWeek.of(2)  // Tuesday is 2
-        "星期三" -> DayOfWeek.of(3)  // Wednesday is 3
-        "星期四" -> DayOfWeek.of(4)  // Thursday is 4
-        "星期五" -> DayOfWeek.of(5)  // Friday is 5
-        "星期六" -> DayOfWeek.of(6)  // Saturday is 6
-        "星期日" -> DayOfWeek.of(7)  // Sunday is 7
-        else -> currentDayOfWeek
-    }
-
-    val alarmCalendar = Calendar.getInstance().apply {
-        set(Calendar.HOUR_OF_DAY, alarmTime.hour)
-        set(Calendar.MINUTE, alarmTime.minute)
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-
-        var daysToAdd = targetDayOfWeek.value - currentDayOfWeek.value
-        if (daysToAdd < 0 || (daysToAdd == 0 && Calendar.getInstance().get(Calendar.HOUR_OF_DAY) > alarmTime.hour)) {
-            daysToAdd += 7
-        }
-
-        Log.d("AlarmScheduler", "Days to add: $daysToAdd")
-        Log.d("AlarmScheduler", "Current hour: ${Calendar.getInstance().get(Calendar.HOUR_OF_DAY)}")
-        Log.d("AlarmScheduler", "Alarm hour: ${alarmTime.hour}")
-
-        add(Calendar.DAY_OF_YEAR, daysToAdd)
-    }
-
-    Log.d("AlarmScheduler", "Alarm time in millis: ${alarmCalendar.timeInMillis}")
-    Log.d("AlarmScheduler", "Alarm date: ${alarmCalendar.time}")
-
-    val alarmIntent = Intent(context, NotificationReceiver::class.java).apply {
-        putExtra("course_id", course.id)
-        putExtra("course_name", course.courseName)
-        putExtra("teacher_name", course.teacherName)
-        putExtra("location", course.location)
-        putExtra("start_time", course.startTime.toString())
-        putExtra("end_time", course.endTime.toString())
-        putExtra("is_notification_enabled", true)
-        // 額外加入 weekDay 資訊，幫助追蹤
-        putExtra("week_day", weekDay)
-    }
-
-    val pendingIntent = PendingIntent.getBroadcast(
-        context,
-        course.id.hashCode(),
-        alarmIntent,
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    )
-
-    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
-
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        val canScheduleExactAlarms = alarmManager?.canScheduleExactAlarms() ?: false
-        Log.d("AlarmScheduler", "Can schedule exact alarms: $canScheduleExactAlarms")
-    }
-
-    alarmManager?.setExact(AlarmManager.RTC_WAKEUP, alarmCalendar.timeInMillis, pendingIntent)
-
-    Log.d("AlarmScheduler", "Alarm set successfully for course: ${course.courseName}")
-}
-
-fun cancelNotification(context: Context, course: Schedule) {
-    // 首先取消鬧鐘，使用 ScheduleScreen 的邏輯
-    val alarmIntent = createNotificationIntent(context, course)
-    val pendingIntent = PendingIntent.getBroadcast(
-        context,
-        course.id.hashCode(),
-        alarmIntent,
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    )
-    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
-    alarmManager?.cancel(pendingIntent)
-
-    // 然後取消通知，使用 Activity 的邏輯但修正函數名稱拼寫
-    val notificationId = course.id.hashCode()
-    NotificationManagerCompat.from(context).cancel(notificationId)
-
-    // 加入 ScheduleScreen 中的日誌記錄
-    Log.d("CancelNotification", "Cancelled notification for ${course.courseName}")
 }
 
 suspend fun fetchWebData(url: String, cookies: String?): List<Schedule> {
@@ -677,7 +566,9 @@ suspend fun fetchWebData(url: String, cookies: String?): List<Schedule> {
                             location = parsedData["場地"] ?: "其它",
                             weekDay = weekDay,
                             startTime = startTime,
-                            endTime = endTime
+                            endTime = endTime,
+                            courseDates = getCourseDates(weekDay),
+                            isNotificationEnabled = false // 預設為關閉
                         )
                         tempDataList.add(courseSchedule)
                     }
@@ -708,7 +599,9 @@ suspend fun fetchWebData(url: String, cookies: String?): List<Schedule> {
                                 location = courses.first().location,
                                 weekDay = key.second,
                                 startTime = currentStartTime.plusMinutes(10),
-                                endTime = currentEndTime!!
+                                endTime = currentEndTime!!,
+                                courseDates = getCourseDates(key.second),
+                                isNotificationEnabled = false // 預設為關閉
                             )
                         )
                         currentStartTime = course.startTime
@@ -725,7 +618,9 @@ suspend fun fetchWebData(url: String, cookies: String?): List<Schedule> {
                             location = courses.first().location,
                             weekDay = key.second,
                             startTime = currentStartTime.plusMinutes(10),
-                            endTime = currentEndTime
+                            endTime = currentEndTime,
+                            courseDates = getCourseDates(key.second),
+                            isNotificationEnabled = false // 預設為關閉
                         )
                     )
                 }
