@@ -35,7 +35,9 @@ import com.example.project250311.Schedule.GetSchedule.ScheduleScreen
 import com.example.project250311.Schedule.NoSchool.LeaveSystemScreen
 import com.example.project250311.Schedule.Note.NoteListScreen
 import com.example.project250311.Schedule.Note.NoteScreen
+import com.example.project250311.Schedule.Notice.BootReceiverTestScreen
 import com.example.project250311.Schedule.Notice.NotificationManagerScreen
+import com.example.project250311.Schedule.Notice.NotificationTestScreen
 import com.example.project250311.ui.theme.Project250311Theme
 import kotlinx.coroutines.launch
 
@@ -113,7 +115,9 @@ fun AppWithNavigation(
         NavigationItem("schedule", "課程表", Icons.Default.CalendarToday),
         NavigationItem("leave", "請假系統", Icons.Default.ExitToApp),
         NavigationItem("notes", "筆記", Icons.Default.Note),
-        NavigationItem("notice", "通知", Icons.Default.Notifications)
+        NavigationItem("notice", "通知", Icons.Default.Notifications),
+        NavigationItem("notification_test", "通知測試", Icons.Default.Notifications),
+        NavigationItem("boot_receiver_test", "BootReceiver測試", Icons.Default.Notifications)
     )
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -239,6 +243,13 @@ fun AppNavHost(
                     }
                 }
             )
+        }
+        composable("notification_test") {
+            NotificationTestScreen()
+        }
+
+        composable("boot_receiver_test") {
+            BootReceiverTestScreen()
         }
     }
 }

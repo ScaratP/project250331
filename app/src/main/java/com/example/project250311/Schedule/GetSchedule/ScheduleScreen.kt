@@ -1,12 +1,7 @@
 package com.example.project250311.Schedule.GetSchedule
 
 import android.annotation.SuppressLint
-import android.app.AlarmManager
-import android.app.PendingIntent
-import android.content.Context
-import android.content.Intent
 import android.util.Log
-import android.app.NotificationChannel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,7 +21,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.app.NotificationManagerCompat
 import com.example.project250311.Data.CourseViewModel
 import com.example.project250311.Data.Schedule
 import kotlinx.coroutines.launch
@@ -37,23 +31,12 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import com.example.project250311.Schedule.Notice.NotificationReceiver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
-import androidx.core.app.ActivityCompat
-import android.app.Activity
-import android.app.NotificationManager
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.core.content.ContextCompat
 import com.example.project250311.Schedule.Notice.NotificationUtils.cancelNotification
 import com.example.project250311.Schedule.Notice.NotificationUtils.getCourseDates
 import com.example.project250311.Schedule.Notice.NotificationUtils.setNotificationAlarm
-import java.time.DayOfWeek
-import java.time.LocalDate
-import java.time.temporal.TemporalAdjusters
-import java.util.Calendar
 
 // 用來保存通知狀態的全局變量，這樣在重組時狀態不會丟失
 //private val globalNotificationStates = mutableStateMapOf<String, Boolean>()
