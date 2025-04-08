@@ -330,7 +330,8 @@ fun GetLeaveDataScreen(
                         cookies = newCookies
                         onLoginSuccess(newCookies)
                         webViewLoaded = true
-                    },
+
+                                            },
                     onLeaveAppClicked = { jsonString ->
                         if (jsonString != null) {
                             viewModel.viewModelScope.launch {
@@ -424,6 +425,7 @@ fun WebViewLeaveComponent(
     onLoginSuccess: (String) -> Unit,
     onLeaveAppClicked: (String?) -> Unit
 ) {
+    var webViewLoaded by remember { mutableStateOf(false) } // 加這行控制動畫顯示
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -448,7 +450,7 @@ fun WebViewLeaveComponent(
                         override fun onPageFinished(view: WebView, url: String) {
                             val cookies = CookieManager.getInstance().getCookie(url)
                             Log.d("WebViewLeaveScreen", "Cookies: $cookies")
-
+                            webViewLoaded = true
                             if (url.contains("index.aspx")) {
                                 Log.d("WebViewLeaveScreen", "成功登入")
                                 if (!cookies.isNullOrEmpty()) {
@@ -534,9 +536,11 @@ fun WebViewLeaveComponent(
         )
 
         // 顯示載入中提示
-        CircularProgressIndicator(
-            modifier = Modifier.align(Alignment.Center)
-        )
+        if (!webViewLoaded) {
+            CircularProgressIndicator(
+                modifier = Modifier.align(Alignment.Center)
+            )
+        }
     }
 }
 
