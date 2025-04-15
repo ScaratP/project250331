@@ -64,9 +64,7 @@ class NotificationReceiver : BroadcastReceiver() {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             // 標記開啟請假系統
             putExtra("OPEN_LEAVE", true)
-            // 可以添加課程資訊幫助預填寫請假單
-            putExtra("COURSE_NAME", courseName)
-            putExtra("TEACHER_NAME", teacherName)
+
         }
         val leavePendingIntent = PendingIntent.getActivity(
             context, 1, leaveIntent,

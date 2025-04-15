@@ -62,10 +62,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             Project250311Theme {
 
-                // 將 startDestination 傳遞給函數
                 val startDestination =
-                    if (intent?.getBooleanExtra("OPEN_SCHEDULE", false) == true) "schedule"
-                    else "map"
+                    when {
+                        intent?.getBooleanExtra("OPEN_SCHEDULE", false) == true -> "schedule"
+                        intent?.getBooleanExtra("OPEN_LEAVE", false) == true -> "leave"
+                        else -> "map"
+                    }
 
                 AppWithNavigation(
                     courseViewModel = courseViewModel,
