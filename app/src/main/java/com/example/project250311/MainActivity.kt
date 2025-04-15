@@ -33,6 +33,7 @@ import com.example.project250311.Data.CourseRepository
 import com.example.project250311.Data.CourseViewModel
 import com.example.project250311.Schedule.GetSchedule.ScheduleScreen
 import com.example.project250311.Schedule.NoSchool.LeaveSystemScreen
+import com.example.project250311.Schedule.Note.EnhancedNoteScreen
 import com.example.project250311.Schedule.Note.NoteListScreen
 import com.example.project250311.Schedule.Note.NoteScreen
 import com.example.project250311.Schedule.Notice.BootReceiverTestScreen
@@ -223,20 +224,16 @@ fun AppNavHost(
             NoteListScreen(
                 onNavigateToNoteEditor = {
                     navController.navigate("note_edit")
+                },
+                onNavigateToEditNote = { noteId ->
+                    navController.navigate("note_edit_with_id/$noteId")
                 }
             )
         }
 
-        // 通知設定
-        composable("notice") {
-            NotificationManagerScreen(navController)
-        }
-
-        // 筆記編輯/新增
-        composable(
-            route = "note_edit",
-        ) {
-            NoteScreen(
+        // 新增筆記（不帶參數的路由）
+        composable("note_edit") {
+            EnhancedNoteScreen(
                 onNavigateToNoteList = {
                     navController.navigate("notes") {
                         popUpTo("notes") {
@@ -246,6 +243,36 @@ fun AppNavHost(
                 }
             )
         }
+
+        // 編輯筆記（帶參數的路由，使用不同的路徑名稱）
+        composable(
+            route = "note_edit_with_id/{noteId}",
+            arguments = listOf(navArgument("noteId") {
+                type = NavType.IntType
+                defaultValue = -1
+            })
+        ) { backStackEntry ->
+            val noteId = backStackEntry.arguments?.getInt("noteId") ?: -1
+            val actualNoteId = if (noteId == -1) null else noteId
+
+            EnhancedNoteScreen(
+                onNavigateToNoteList = {
+                    navController.navigate("notes") {
+                        popUpTo("notes") {
+                            inclusive = true
+                        }
+                    }
+                },
+                noteId = actualNoteId
+            )
+        }
+
+        // 通知設定
+        composable("notice") {
+            NotificationManagerScreen(navController)
+        }
+
+        // 測試路由
         composable("notification_test") {
             NotificationTestScreen()
         }

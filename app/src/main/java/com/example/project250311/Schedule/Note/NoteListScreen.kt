@@ -11,6 +11,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,7 +32,9 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 @Composable
-fun NoteListScreen(onNavigateToNoteEditor: () -> Unit) {
+fun NoteListScreen(
+    onNavigateToNoteEditor: () -> Unit,
+    onNavigateToEditNote: (noteId: Int) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val db = NoteDatabase.getDatabase(context)
@@ -140,7 +145,14 @@ fun NoteListScreen(onNavigateToNoteEditor: () -> Unit) {
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(4.dp)
-                                .clickable { expandedNotes[note.id] = !isExpanded },
+                                .clickable {
+                                    // 長按展開，短按進入編輯模式
+                                    if (isExpanded) {
+                                        onNavigateToEditNote(note.id)
+                                    } else {
+                                        expandedNotes[note.id] = !isExpanded
+                                    }
+                                },
                             colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF9C4))
                         ) {
                             Column(modifier = Modifier.padding(8.dp)) {
@@ -182,6 +194,17 @@ fun NoteListScreen(onNavigateToNoteEditor: () -> Unit) {
                                         color = Color.Gray,
                                         modifier = Modifier.padding(end = 8.dp)
                                     )
+
+                                    IconButton(onClick = {
+                                        onNavigateToEditNote(note.id)
+                                    }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = "編輯便利貼",
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+
                                     IconButton(onClick = {
                                         scope.launch {
                                             try {
@@ -193,9 +216,9 @@ fun NoteListScreen(onNavigateToNoteEditor: () -> Unit) {
                                             }
                                         }
                                     }) {
-                                        Image(
+                                        Icon(
                                             painter = painterResource(id = R.drawable.delete),
-                                            contentDescription = "Delete Note",
+                                            contentDescription = "刪除便利貼",
                                             modifier = Modifier.size(24.dp)
                                         )
                                     }
@@ -218,10 +241,9 @@ fun NoteListScreen(onNavigateToNoteEditor: () -> Unit) {
             FloatingActionButton(
                 onClick = { onNavigateToNoteEditor() },
             ) {
-                Image(
-                    painter = painterResource(id = R.drawable.new_note),
-                    contentDescription = "New Note",
-                    modifier = Modifier.size(48.dp)
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "新增筆記"
                 )
             }
         }
