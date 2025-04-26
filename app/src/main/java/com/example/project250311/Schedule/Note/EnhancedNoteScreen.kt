@@ -70,7 +70,6 @@ class NoteEditorState(
     var textColor by mutableStateOf(Color.Black)
     var fontSize by mutableStateOf(20.sp)
     var isHighlighted by mutableStateOf(false)
-    var textAlign by mutableStateOf(TextAlign.Start)
 
     // 編輯歷史記錄 (簡易的還原/重做功能)
     private val historyLimit = 30
@@ -104,71 +103,121 @@ class NoteEditorState(
     }
 
     // 更新文本並保持格式
+    // 更新文本並保持格式
     fun updateText(newValue: TextFieldValue) {
         val previousText = textFieldValue.text
         val newText = newValue.text
-        val previousLength = previousText.length
-        val newLength = newText.length
 
-        // 檢查是否有選擇範圍
-        val hasSelection = newValue.selection.collapsed.not() &&
-                (newValue.selection.start != newValue.selection.end)
+        // 如果文字沒有變化，只是選擇範圍變化，直接更新選擇範圍
+        if (previousText == newText) {
+            textFieldValue = newValue.copy(annotatedString = annotatedString)
+            return
+        }
 
         try {
+            // 找出文字變化的部分
+            val commonPrefixLength = findCommonPrefixLength(previousText, newText)
+            val commonSuffixLength = findCommonSuffixLength(
+                previousText.substring(commonPrefixLength),
+                newText.substring(commonPrefixLength)
+            )
+
+            // 確定變更區域
+            val oldChangeStart = commonPrefixLength
+            val oldChangeEnd = previousText.length - commonSuffixLength
+            val newChangeStart = commonPrefixLength
+            val newChangeEnd = newText.length - commonSuffixLength
+
+            // 計算變化量
+            val oldChangeLength = oldChangeEnd - oldChangeStart
+            val newChangeLength = newChangeEnd - newChangeStart
+            val lengthDelta = newChangeLength - oldChangeLength
+
+            // 創建新的 Builder，但僅包含變更部分
             val builder = AnnotatedString.Builder()
             builder.append(newText)
 
-            // 重新應用所有已有樣式
+            // 1. 保留變更前的樣式（前綴部分）
             annotatedString.spanStyles.forEach { style ->
-                if (style.start < newLength && style.end <= newLength) {
-                    // 完全在範圍內的樣式
+                // 完全在前綴區域的樣式
+                if (style.end <= oldChangeStart) {
                     builder.addStyle(style.item, style.start, style.end)
-                } else if (style.start < newLength) {
-                    // 部分在範圍內的樣式
-                    builder.addStyle(style.item, style.start, newLength)
+                }
+                // 與前綴區域部分重疊的樣式
+                else if (style.start < oldChangeStart) {
+                    builder.addStyle(style.item, style.start, oldChangeStart)
                 }
             }
 
-            // 應用段落樣式
-            annotatedString.paragraphStyles.forEach { paraStyle ->
-                if (paraStyle.start < newLength && paraStyle.end <= newLength) {
-                    builder.addStyle(paraStyle.item, paraStyle.start, paraStyle.end)
-                } else if (paraStyle.start < newLength) {
-                    builder.addStyle(paraStyle.item, paraStyle.start, newLength)
-                }
-            }
-
-            // 為新增的文字或選擇的範圍添加當前樣式
-            if (hasSelection) {
-                // 為選定範圍應用樣式
-                applyStyleToRange(
-                    builder,
-                    newValue.selection.min,
-                    newValue.selection.max,
-                    createCurrentStyle()
-                )
-            } else if (newLength > previousLength) {
-                // 為新增的文字應用樣式
+            // 2. 如果有選擇範圍，為選擇範圍添加當前樣式
+            val selection = newValue.selection
+            if (!selection.collapsed && selection.start != selection.end) {
                 builder.addStyle(
                     createCurrentStyle(),
-                    previousLength,
-                    newLength
+                    selection.min,
+                    selection.max
                 )
+            }
+            // 否則，為新增的文字添加當前樣式
+            else if (newChangeLength > 0) {
+                builder.addStyle(
+                    createCurrentStyle(),
+                    newChangeStart,
+                    newChangeEnd
+                )
+            }
+
+            // 3. 保留變更後的樣式（後綴部分），並調整位置
+            annotatedString.spanStyles.forEach { style ->
+                // 完全在後綴區域的樣式
+                if (style.start >= oldChangeEnd) {
+                    val newStart = style.start + lengthDelta
+                    val newEnd = style.end + lengthDelta
+                    if (newStart < newText.length && newEnd <= newText.length) {
+                        builder.addStyle(style.item, newStart, newEnd)
+                    }
+                }
+                // 與後綴區域部分重疊的樣式
+                else if (style.end > oldChangeEnd) {
+                    val newStart = Math.max(newChangeEnd, style.start + lengthDelta)
+                    val newEnd = style.end + lengthDelta
+                    if (newStart < newText.length && newEnd <= newText.length) {
+                        builder.addStyle(style.item, newStart, newEnd)
+                    }
+                }
             }
 
             // 更新狀態
             annotatedString = builder.toAnnotatedString()
             textFieldValue = newValue.copy(annotatedString = annotatedString)
+            isModified = true
+            addToHistory()
 
-            // 標記修改狀態
-            if (newText != previousText) {
-                isModified = true
-                addToHistory()
-            }
         } catch (e: Exception) {
-            // 記錄錯誤但不中斷用戶體驗
-            Log.e("NoteEditorState", "Error updating text", e)
+            Log.e("NoteEditorState", "Error in updateText: ${e.message}", e)
         }
+    }
+
+    // 找到兩個字串的共同前綴長度
+    private fun findCommonPrefixLength(str1: String, str2: String): Int {
+        val minLength = Math.min(str1.length, str2.length)
+        for (i in 0 until minLength) {
+            if (str1[i] != str2[i]) {
+                return i
+            }
+        }
+        return minLength
+    }
+
+    // 找到兩個字串的共同後綴長度
+    private fun findCommonSuffixLength(str1: String, str2: String): Int {
+        val minLength = Math.min(str1.length, str2.length)
+        for (i in 0 until minLength) {
+            if (str1[str1.length - 1 - i] != str2[str2.length - 1 - i]) {
+                return i
+            }
+        }
+        return minLength
     }
 
     // 創建當前樣式
@@ -236,7 +285,7 @@ class NoteEditorState(
     }
 
     // 設置文字顏色
-    fun setTextColor(color: Color) {
+    fun updateTextColor(color: Color) {
         textColor = color
         applyCurrentStyleToSelection()
     }
@@ -245,12 +294,6 @@ class NoteEditorState(
     fun toggleHighlight() {
         isHighlighted = !isHighlighted
         applyCurrentStyleToSelection()
-    }
-
-    // 設置文本對齊
-    fun setTextAlign(align: TextAlign) {
-        textAlign = align
-        applyParagraphStyleToSelection()
     }
 
     // 應用當前樣式到選擇範圍
@@ -331,13 +374,6 @@ class NoteEditorState(
                 builder.addStyle(paraStyle.item, paraStyle.start, paraStyle.end)
             }
         }
-
-        // 應用新的段落樣式
-        builder.addStyle(
-            ParagraphStyle(textAlign = textAlign),
-            paraStart,
-            paraEnd
-        )
 
         // 更新狀態
         annotatedString = builder.toAnnotatedString()
@@ -803,13 +839,6 @@ fun EnhancedNoteScreen(
                                         }
                                     }
                                 )
-                            }
-
-                            // 第二行工具列
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
                                 // 紅色文字按鈕
                                 FormatButton(
                                     content = {
@@ -823,9 +852,9 @@ fun EnhancedNoteScreen(
                                     isSelected = editorState.textColor == Color.Red,
                                     onClick = {
                                         if (editorState.textColor == Color.Red) {
-                                            editorState.setTextColor(Color.Black)
+                                            editorState.updateTextColor(Color.Black)
                                         } else {
-                                            editorState.setTextColor(Color.Red)
+                                            editorState.updateTextColor(Color.Red)
                                         }
                                     }
                                 )
@@ -843,9 +872,9 @@ fun EnhancedNoteScreen(
                                     isSelected = editorState.textColor == Color.Blue,
                                     onClick = {
                                         if (editorState.textColor == Color.Blue) {
-                                            editorState.setTextColor(Color.Black)
+                                            editorState.updateTextColor(Color.Black)
                                         } else {
-                                            editorState.setTextColor(Color.Blue)
+                                            editorState.updateTextColor(Color.Blue)
                                         }
                                     }
                                 )
@@ -863,9 +892,9 @@ fun EnhancedNoteScreen(
                                     isSelected = editorState.textColor == Color.Green,
                                     onClick = {
                                         if (editorState.textColor == Color.Green) {
-                                            editorState.setTextColor(Color.Black)
+                                            editorState.updateTextColor(Color.Black)
                                         } else {
-                                            editorState.setTextColor(Color.Green)
+                                            editorState.updateTextColor(Color.Green)
                                         }
                                     }
                                 )
@@ -877,51 +906,22 @@ fun EnhancedNoteScreen(
                                     isSelected = editorState.isHighlighted,
                                     onClick = { editorState.toggleHighlight() }
                                 )
-
-                                // 對齊方式：左對齊
-                                FormatButton(
-                                    icon = Icons.Default.FormatAlignLeft,
-                                    description = "左對齊",
-                                    isSelected = editorState.textAlign == TextAlign.Start,
-                                    onClick = { editorState.setTextAlign(TextAlign.Start) }
-                                )
-
-                                // 對齊方式：居中對齊
-                                FormatButton(
-                                    icon = Icons.Default.FormatAlignCenter,
-                                    description = "居中對齊",
-                                    isSelected = editorState.textAlign == TextAlign.Center,
-                                    onClick = { editorState.setTextAlign(TextAlign.Center) }
-                                )
-
-                                // 對齊方式：右對齊
-                                FormatButton(
-                                    icon = Icons.Default.FormatAlignRight,
-                                    description = "右對齊",
-                                    isSelected = editorState.textAlign == TextAlign.End,
-                                    onClick = { editorState.setTextAlign(TextAlign.End) }
-                                )
                             }
                         }
                     }
-                }
+                    // 上次保存時間提示
+                    editorState.lastSavedTimestamp?.let { timestamp ->
+                        val formattedTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                            .format(Date(timestamp))
+                        Text(
+                            text = "上次儲存: $formattedTime",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                        )
+                    }
 
-                // 上次保存時間提示
-                editorState.lastSavedTimestamp?.let { timestamp ->
-                    val formattedTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
-                        .format(Date(timestamp))
-                    Text(
-                        text = "上次儲存: $formattedTime",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                    )
-                }
-
-                // 文本編輯區域
-                Column(
-                    modifier = Modifier.fillMaxSize()
-                ){
+                    // 文本編輯區域
                     TextField(
                         value = editorState.textFieldValue,
                         onValueChange = { newValue ->
@@ -929,7 +929,7 @@ fun EnhancedNoteScreen(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1.0f)
+                            .weight(1f)
                             .padding(horizontal = 16.dp)
                             .border(
                                 width = 1.dp,
@@ -947,6 +947,7 @@ fun EnhancedNoteScreen(
                         singleLine = false,
                         maxLines = Int.MAX_VALUE
                     )
+
                 }
             }
         }
