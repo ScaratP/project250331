@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -16,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -45,6 +47,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import java.text.SimpleDateFormat
 import java.util.*
+
+// Add this import at the top of the file with the other imports
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.Dp
 
 // 筆記編輯器的狀態類
 class NoteEditorState(
@@ -478,7 +485,7 @@ data class HistoryState(
     val annotatedString: AnnotatedString
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun EnhancedNoteScreen(
     onNavigateToNoteList: () -> Unit,
@@ -759,24 +766,35 @@ fun EnhancedNoteScreen(
                 ) {
                     // 格式工具列
                     AnimatedVisibility(visible = showFormatPanel) {
-                        Column(
+                        val configuration = LocalConfiguration.current
+                        val screenWidth = configuration.screenWidthDp.dp
+                        val buttonSize = if (screenWidth < 360.dp) 36.dp else 40.dp
+                        val spacing = if (screenWidth < 360.dp) 1.dp else 2.dp
+                        
+                        Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                .padding(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            tonalElevation = 1.dp,
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                            shape = RoundedCornerShape(8.dp)
                         ) {
-                            // 第一行工具列
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                modifier = Modifier.fillMaxWidth()
+                            @OptIn(ExperimentalLayoutApi::class)
+                            FlowRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(spacing),
+                                verticalArrangement = Arrangement.spacedBy(spacing),
+                                maxItemsInEachRow = Int.MAX_VALUE
                             ) {
                                 // 粗體按鈕
                                 FormatButton(
                                     icon = Icons.Default.FormatBold,
                                     description = "粗體",
                                     isSelected = editorState.isBold,
-                                    onClick = { editorState.toggleBold() }
+                                    onClick = { editorState.toggleBold() },
+                                    size = buttonSize
                                 )
 
                                 // 斜體按鈕
@@ -784,7 +802,8 @@ fun EnhancedNoteScreen(
                                     icon = Icons.Default.FormatItalic,
                                     description = "斜體",
                                     isSelected = editorState.isItalic,
-                                    onClick = { editorState.toggleItalic() }
+                                    onClick = { editorState.toggleItalic() },
+                                    size = buttonSize
                                 )
 
                                 // 底線按鈕
@@ -792,7 +811,8 @@ fun EnhancedNoteScreen(
                                     icon = Icons.Default.FormatUnderlined,
                                     description = "底線",
                                     isSelected = editorState.isUnderline,
-                                    onClick = { editorState.toggleUnderline() }
+                                    onClick = { editorState.toggleUnderline() },
+                                    size = buttonSize
                                 )
 
                                 // 刪除線按鈕
@@ -800,7 +820,17 @@ fun EnhancedNoteScreen(
                                     icon = Icons.Default.FormatStrikethrough,
                                     description = "刪除線",
                                     isSelected = editorState.isStrikethrough,
-                                    onClick = { editorState.toggleStrikethrough() }
+                                    onClick = { editorState.toggleStrikethrough() },
+                                    size = buttonSize
+                                )
+
+                                // 分隔線
+                                VerticalDivider(
+                                    modifier = Modifier
+                                        .height(buttonSize * 0.8f)
+                                        .padding(horizontal = spacing)
+                                        .align(Alignment.CenterVertically),
+                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
                                 )
 
                                 // 大字體按鈕
@@ -814,7 +844,8 @@ fun EnhancedNoteScreen(
                                         } else {
                                             editorState.setFontSize(24f)
                                         }
-                                    }
+                                    },
+                                    size = buttonSize
                                 )
 
                                 // 小字體按鈕
@@ -837,8 +868,19 @@ fun EnhancedNoteScreen(
                                         } else {
                                             editorState.setFontSize(16f)
                                         }
-                                    }
+                                    },
+                                    size = buttonSize
                                 )
+
+                                // 分隔線
+                                VerticalDivider(
+                                    modifier = Modifier
+                                        .height(buttonSize * 0.8f)
+                                        .padding(horizontal = spacing)
+                                        .align(Alignment.CenterVertically),
+                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                                )
+
                                 // 紅色文字按鈕
                                 FormatButton(
                                     content = {
@@ -856,7 +898,8 @@ fun EnhancedNoteScreen(
                                         } else {
                                             editorState.updateTextColor(Color.Red)
                                         }
-                                    }
+                                    },
+                                    size = buttonSize
                                 )
 
                                 // 藍色文字按鈕
@@ -876,35 +919,47 @@ fun EnhancedNoteScreen(
                                         } else {
                                             editorState.updateTextColor(Color.Blue)
                                         }
-                                    }
+                                    },
+                                    size = buttonSize
                                 )
 
                                 // 綠色文字按鈕
-                                FormatButton(
-                                    content = {
-                                        Icon(
-                                            imageVector = Icons.Default.FormatColorText,
-                                            contentDescription = "綠色",
-                                            tint = Color.Green
-                                        )
-                                    },
-                                    description = "綠色文字",
-                                    isSelected = editorState.textColor == Color.Green,
-                                    onClick = {
-                                        if (editorState.textColor == Color.Green) {
-                                            editorState.updateTextColor(Color.Black)
-                                        } else {
-                                            editorState.updateTextColor(Color.Green)
-                                        }
-                                    }
+                                // FormatButton(
+                                //     content = {
+                                //         Icon(
+                                //             imageVector = Icons.Default.FormatColorText,
+                                //             contentDescription = "綠色",
+                                //             tint = Color.Green
+                                //         )
+                                //     },
+                                //     description = "綠色文字",
+                                //     isSelected = editorState.textColor == Color.Green,
+                                //     onClick = {
+                                //         if (editorState.textColor == Color.Green) {
+                                //             editorState.updateTextColor(Color.Black)
+                                //         } else {
+                                //             editorState.updateTextColor(Color.Green)
+                                //         }
+                                //     },
+                                //     size = buttonSize
+                                // )
+
+                                // 分隔線
+                                VerticalDivider(
+                                    modifier = Modifier
+                                        .height(buttonSize * 0.8f)
+                                        .padding(horizontal = spacing)
+                                        .align(Alignment.CenterVertically),
+                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
                                 )
 
                                 // 背景標記按鈕
                                 FormatButton(
-                                    icon = Icons.Default.Colorize,
+                                    icon = Icons.Default.BorderColor,
                                     description = "背景標記",
                                     isSelected = editorState.isHighlighted,
-                                    onClick = { editorState.toggleHighlight() }
+                                    onClick = { editorState.toggleHighlight() },
+                                    size = buttonSize
                                 )
                             }
                         }
@@ -961,11 +1016,12 @@ fun FormatButton(
     content: @Composable (() -> Unit)? = null,
     description: String,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    size: Dp = 40.dp
 ) {
     Box(
         modifier = Modifier
-            .size(40.dp)
+            .size(size)
             .background(
                 color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
                 else Color.Transparent,
@@ -979,9 +1035,43 @@ fun FormatButton(
                 imageVector = icon,
                 contentDescription = description,
                 tint = if (isSelected) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(size * 0.6f)
             )
         } else if (content != null) {
+            content()
+        }
+    }
+}
+
+// 格式按鈕組
+@Composable
+fun FormatButtonGroup(
+    title: String,
+    buttonSize: Dp,
+    content: @Composable () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .padding(horizontal = 4.dp, vertical = 2.dp)
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                shape = RoundedCornerShape(8.dp)
+            )
+            .padding(4.dp)
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 2.dp)
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(2.dp)
+        ) {
             content()
         }
     }
