@@ -1072,6 +1072,7 @@ private suspend fun saveNote(
         if (showSnackbar) {
             withContext(Dispatchers.Main) {
                 snackbarHostState.showSnackbar(
+
                     message = "儲存失敗: ${e.message}",
                     duration = SnackbarDuration.Short
                 )
