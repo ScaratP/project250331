@@ -12,6 +12,17 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Project250311"
         tools:targetApi="31">
+
+        <!-- 新增：Google Maps API 金鑰 -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${MAPS_API_KEY}" />
+
+        <!-- 新增：Google Play 服務版本 -->
+        <meta-data
+            android:name="com.google.android.gms.version"
+            android:value="@integer/google_play_services_version" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -19,15 +30,13 @@
             android:theme="@style/Theme.Project250311">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-
         <receiver
             android:name=".Schedule.Notice.NotificationReceiver"
-            android:exported="true"/>
+            android:exported="true" />
         <receiver
             android:name=".Schedule.Notice.BootReceiver"
             android:exported="false">
@@ -37,10 +46,9 @@
             </intent-filter>
         </receiver>
 
-        />
-
-
-
+        <uses-library
+            android:name="org.apache.http.legacy"
+            android:required="false" />
 
     </application>
 
@@ -48,15 +56,21 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>   <!-- 通知權限 -->
-
     <!-- ⏰ 精確鬧鐘通知 -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
+    <!-- 📲 通知權限 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- 新增：位置權限 粗略 仔細-->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
+    <!-- 外部儲存空間權限-->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
 
 </manifest>
