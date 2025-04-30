@@ -73,13 +73,6 @@
 - 通知權限（用於課程提醒）
 - 精確鬧鐘權限（精確的課程通知）
 
-## 📲 安裝方式 (Installation)
-
-1. 從 GitHub Releases 下載最新的 APK 檔案
-2. 在 Android 裝置上開啟檔案並安裝
-3. 首次啟動時需授予必要權限
-4. 使用學校系統帳號登入以同步課程資料
-
 ## 🔐 權限說明 (Permissions)
 
 本應用程式需要以下權限才能正常運作：
@@ -117,8 +110,3 @@ app/src/main/java/com/example/project250311/
 - Material 3 Components 1.3.1
 - GSON 2.10.1
 - Navigation Compose 2.8.9
-
-## 📄 版權與授權 (License)
-
-© 2024 課程管理應用程式開發團隊。保留所有權利。
-本應用程式僅供教育用途，未經授權禁止商業使用。
