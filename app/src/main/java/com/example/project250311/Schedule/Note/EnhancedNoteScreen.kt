@@ -922,29 +922,6 @@ fun EnhancedNoteScreen(
                                     },
                                     size = buttonSize
                                 )
-
-                                // 綠色文字按鈕
-                                // FormatButton(
-                                //     content = {
-                                //         Icon(
-                                //             imageVector = Icons.Default.FormatColorText,
-                                //             contentDescription = "綠色",
-                                //             tint = Color.Green
-                                //         )
-                                //     },
-                                //     description = "綠色文字",
-                                //     isSelected = editorState.textColor == Color.Green,
-                                //     onClick = {
-                                //         if (editorState.textColor == Color.Green) {
-                                //             editorState.updateTextColor(Color.Black)
-                                //         } else {
-                                //             editorState.updateTextColor(Color.Green)
-                                //         }
-                                //     },
-                                //     size = buttonSize
-                                // )
-
-                                // 分隔線
                                 VerticalDivider(
                                     modifier = Modifier
                                         .height(buttonSize * 0.8f)
