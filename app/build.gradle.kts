@@ -20,6 +20,8 @@ android {
     namespace = "com.example.project250311"
     compileSdk = 35
 
+    val MAPS_API_KEY: String by project
+
     defaultConfig {
         applicationId = "com.example.project250311"
         minSdk = 31
@@ -28,6 +30,8 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        manifestPlaceholders["MAPS_API_KEY"] = MAPS_API_KEY
     }
 
     buildTypes {
@@ -111,4 +115,6 @@ dependencies {
 
     // Maps SDK for Android
     implementation("com.google.android.gms:play-services-maps:18.2.0")
+    implementation("com.google.maps.android:maps-compose:2.5.0")
+
 }
