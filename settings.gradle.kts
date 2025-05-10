@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "project250311"
+rootProject.name = "PAMUTT"
 include(":app")
