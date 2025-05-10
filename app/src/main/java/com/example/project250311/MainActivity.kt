@@ -3,13 +3,10 @@ package com.example.project250311
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -18,13 +15,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.getSystemService
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import androidx.navigation.NavController
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -40,21 +34,10 @@ import com.example.project250311.Schedule.GetSchedule.ScheduleScreen
 import com.example.project250311.Schedule.NoSchool.LeaveSystemScreen
 import com.example.project250311.Schedule.Note.EnhancedNoteScreen
 import com.example.project250311.Schedule.Note.NoteListScreen
-import com.example.project250311.Schedule.Note.NoteScreen
-import com.example.project250311.Schedule.Notice.BootReceiverTestScreen
 import com.example.project250311.Schedule.Notice.NotificationManagerScreen
-import com.example.project250311.Schedule.Notice.NotificationTestScreen
+import com.example.project250311.Map.MapScreen  // 新增 import
 import com.example.project250311.ui.theme.Project250311Theme
-import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.LatLng
 import kotlinx.coroutines.launch
-import android.Manifest
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import com.google.maps.android.compose.GoogleMap
-import com.google.maps.android.compose.MapProperties
-import com.google.maps.android.compose.rememberCameraPositionState
-
 
 class MainActivity : ComponentActivity() {
     // 使用 viewModels 委託創建 CourseViewModel 實例
@@ -195,7 +178,7 @@ fun AppWithNavigation(
                     }
                 )
             }
-        ) { paddingValues ->
+        ) { paddingValues -> 
             AppNavHost(
                 navController = navController,
                 courseViewModel = courseViewModel,
@@ -265,7 +248,7 @@ fun AppNavHost(
                 type = NavType.IntType
                 defaultValue = -1
             })
-        ) { backStackEntry ->
+        ) { backStackEntry -> 
             val noteId = backStackEntry.arguments?.getInt("noteId") ?: -1
             val actualNoteId = if (noteId == -1) null else noteId
 
@@ -285,55 +268,5 @@ fun AppNavHost(
         composable("notice") {
             NotificationManagerScreen(navController)
         }
-
-        // 測試路由
-        composable("notification_test") {
-            NotificationTestScreen()
-        }
-
-        composable("boot_receiver_test") {
-            BootReceiverTestScreen()
-        }
-    }
-}
-
-// 基本畫面元件
-@Composable
-fun MapScreen() {
-    val taiwanTaitungUniversity = LatLng(22.7366, 121.0675)
-    val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(taiwanTaitungUniversity, 17f)
-    }
-
-    val context = LocalContext.current
-    var locationPermissionGranted by remember { mutableStateOf(false) }
-
-    val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        locationPermissionGranted = granted
-    }
-
-    LaunchedEffect(Unit) {
-        val granted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-
-        if (!granted) {
-            launcher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
-        } else {
-            locationPermissionGranted = true
-        }
-    }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        GoogleMap(
-            modifier = Modifier.fillMaxSize(),
-            cameraPositionState = cameraPositionState,
-            properties = MapProperties(
-                isMyLocationEnabled = locationPermissionGranted
-            )
-        )
     }
 }
