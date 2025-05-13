@@ -115,9 +115,7 @@ fun AppWithNavigation(
         NavigationItem("schedule", "課程表", Icons.Default.CalendarToday),
         NavigationItem("leave", "請假系統", Icons.Default.ExitToApp),
         NavigationItem("notes", "筆記", Icons.Default.Note),
-        NavigationItem("notice", "通知", Icons.Default.Notifications),
-        NavigationItem("notification_test", "通知測試", Icons.Default.Notifications),
-        NavigationItem("boot_receiver_test", "BootReceiver測試", Icons.Default.Notifications)
+        NavigationItem("notice", "通知", Icons.Default.Notifications)
     )
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
