@@ -6,6 +6,12 @@ import android.content.pm.PackageManager
 import android.location.Location
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -23,6 +29,7 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.*
 import com.google.maps.android.compose.*
+import kotlinx.coroutines.delay
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
@@ -125,22 +132,43 @@ fun MapScreen() {
             }
         }
 
-        // Overlay: 錯誤訊息
-        errorMsg?.let { msg ->
-            Text(
-                text = msg,
-                color = Color.White,
+        // Overlay: 錯誤訊息 with animation
+        LaunchedEffect(errorMsg) {
+            if (errorMsg != null) {
+                delay(3000) // wait for 3 seconds before clearing the error message
+                errorMsg = null
+            }
+        }
+
+        AnimatedVisibility(
+            visible = errorMsg != null,
+            modifier = Modifier
+                .fillMaxWidth() // 讓 AnimatedVisibility 撐滿寬度，才可進行正中間對齊
+                .align(Alignment.TopCenter)
+                .padding(16.dp), // 讓錯誤訊息顯示在最上方正中間
+            enter = fadeIn(animationSpec = tween(300)) + slideInVertically(initialOffsetY = { -100 }, animationSpec = tween(300)),
+            exit = fadeOut(animationSpec = tween(300)) + slideOutVertically(targetOffsetY = { -100 }, animationSpec = tween(300))
+        ) {
+            Box(
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .background(Color.Red.copy(alpha = 0.8f))
-                    .padding(8.dp)
-            )
+                    .wrapContentWidth()
+                    .background(Color(0xFFFFCDD2), shape = MaterialTheme.shapes.large)
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+
+            ) {
+                Text(
+                    text = errorMsg ?: "",
+                    color = Color.DarkGray,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center
+                )
+            }
         }
         // Overlay: Routing loading
         if (isRouting) {
             CircularProgressIndicator(
                 modifier = Modifier
-                    .align(Alignment.Center)
+                    .align(Alignment.TopCenter)
                     .size(48.dp)
                     .background(Color.White.copy(alpha = 0.6f), shape = MaterialTheme.shapes.small)
                     .padding(8.dp)
