@@ -26,7 +26,6 @@ import com.example.project250311.Map.network.RetrofitInstance
 import com.example.project250311.Map.utils.PolylineUtils
 import com.google.android.gms.location.*
 import com.google.android.gms.maps.CameraUpdateFactory
-import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.*
@@ -36,8 +35,11 @@ import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
 import com.example.project250311.R
+import com.google.android.gms.maps.model.Dot
+import com.google.android.gms.maps.model.Gap
+import com.google.android.gms.maps.model.PatternItem
 
-// 1. CustomPoint 包含 description 欄位，用於顯示介紹對話框
+// 1. CustomPoint 包含 description，顯示介紹對話框
 data class CustomPoint(
     val location: LatLng,
     val name: String,
@@ -51,19 +53,26 @@ fun MapScreen() {
     val fusedClient = remember { LocationServices.getFusedLocationProviderClient(context) }
     val scope = rememberCoroutineScope()
 
+    // 2. 初始鏡頭設校園中心
     val defaultLatLng = LatLng(22.7366, 121.0675)
     val cameraState = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(defaultLatLng, 15f)
     }
 
+    // 虛線樣式
+    val dashPattern = listOf<PatternItem>(Dot(), Gap(10f))
+
+    // 3. 狀態變數
     var permissionGranted by remember { mutableStateOf(false) }
     var currentLoc by remember { mutableStateOf<LatLng?>(null) }
+    var lastRerouteLoc by remember { mutableStateOf<LatLng?>(null) } // 上次重新路線用的位置
     var destination by remember { mutableStateOf<LatLng?>(null) }
     var routePoints by remember { mutableStateOf<List<LatLng>>(emptyList()) }
     var isRouting by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
+    var selectedPoint by remember { mutableStateOf<CustomPoint?>(null) }
 
-    // 2. 自訂地點列表
+    // 4. 自訂地點列表
     val customPoints = remember {
         listOf(
             CustomPoint(
@@ -114,7 +123,7 @@ fun MapScreen() {
             CustomPoint(
                 LatLng(22.73567797363531, 121.06765063326057),
                 "圖書館",
-                "圖書館擁有豐富藏書與安靜閱讀區，也設有團體討論室，除此之外也被稱為全球八度獨特圖書館之一。"
+                "圖書館擁有豐富藏書與安靜閱讀區，也被稱為全球八度獨特圖書館之一。"
             ),
             CustomPoint(
                 LatLng(22.73599707595406, 121.06669594919275),
@@ -154,10 +163,7 @@ fun MapScreen() {
         )
     }
 
-    // 3. 點擊自訂點後彈出介紹對話框，需要 selectedPoint 狀態
-    var selectedPoint by remember { mutableStateOf<CustomPoint?>(null) }
-
-    // 申請定位權限
+    // 5. 申請定位權限
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> permissionGranted = granted }
@@ -174,7 +180,7 @@ fun MapScreen() {
         }
     }
 
-    // 4. 設定連續定位的 LocationRequest 与 LocationCallback
+    // 6. 設定持續定位，但不自動移動鏡頭
     val locationRequest = remember {
         LocationRequest.create().apply {
             interval = 5000
@@ -182,44 +188,42 @@ fun MapScreen() {
             priority = Priority.PRIORITY_HIGH_ACCURACY
         }
     }
-
     val locationCallback = remember {
         object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
-                val newLocation: Location? = result.lastLocation
-                if (newLocation != null) {
-                    val newLatLng = LatLng(newLocation.latitude, newLocation.longitude)
+                val loc: Location? = result.lastLocation
+                if (loc != null) {
+                    val newLatLng = LatLng(loc.latitude, loc.longitude)
                     currentLoc = newLatLng
-                    // 地圖鏡頭跟隨使用者
-                    scope.launch {
-                        cameraState.animate(CameraUpdateFactory.newLatLng(newLatLng))
-                    }
-                    // 如果已選目的地，就自動更新路線
+
+                    // 只有當使用者移動超過一定距離（例如 20 公尺）才重新路線
                     destination?.let { dest ->
-                        drawRoute(
-                            origin = newLatLng,
-                            dest = dest,
-                            onStart = { isRouting = true },
-                            onSuccess = {
-                                isRouting = false
-                                routePoints = it
-                            },
-                            onError = {
-                                isRouting = false
-                                errorMsg = it
-                                scope.launch {
-                                    delay(3000)
-                                    errorMsg = null
+                        val prev = lastRerouteLoc
+                        if (prev == null || distanceBetween(prev, newLatLng) > 20f) {
+                            lastRerouteLoc = newLatLng
+                            drawRoute(
+                                origin = newLatLng,
+                                dest = dest,
+                                onStart = { isRouting = true },
+                                onSuccess = {
+                                    isRouting = false
+                                    routePoints = it
+                                },
+                                onError = {
+                                    isRouting = false
+                                    errorMsg = it
+                                    scope.launch {
+                                        delay(3000)
+                                        errorMsg = null
+                                    }
                                 }
-                            }
-                        )
+                            )
+                        }
                     }
                 }
             }
         }
     }
-
-    // 5. 拿到權限後，啟動持續位置更新
     LaunchedEffect(permissionGranted) {
         if (permissionGranted) {
             fusedClient.requestLocationUpdates(
@@ -229,15 +233,11 @@ fun MapScreen() {
             )
         }
     }
-
-    // 6. 在 Composable 銷毀時停止位置更新
     DisposableEffect(Unit) {
-        onDispose {
-            fusedClient.removeLocationUpdates(locationCallback)
-        }
+        onDispose { fusedClient.removeLocationUpdates(locationCallback) }
     }
 
-    // 7. 取得最後一次定位（App 啟動初期定位）
+    // 7. 初次定位
     LaunchedEffect(permissionGranted) {
         if (permissionGranted) {
             fusedClient.lastLocation
@@ -264,17 +264,17 @@ fun MapScreen() {
         }
     }
 
+    // 8. Map 畫面
     Box(modifier = Modifier.fillMaxSize()) {
         GoogleMap(
             modifier = Modifier.matchParentSize(),
             cameraPositionState = cameraState,
-            properties = MapProperties(
-                isMyLocationEnabled = permissionGranted
-            ),
+            properties = MapProperties(isMyLocationEnabled = permissionGranted),
             onMapClick = { latLng ->
-                // 使用者在空白處點擊，直接設定目的地並畫路線
+                // 使用者在空白處點擊：設定新的目的地，清除上次路線並立即計算
                 destination = latLng
                 routePoints = emptyList()
+                lastRerouteLoc = currentLoc  // 確保下次會重新繪一條
                 drawRoute(
                     origin = currentLoc,
                     dest = latLng,
@@ -294,7 +294,7 @@ fun MapScreen() {
                 )
             }
         ) {
-            // 顯示「你的位置」Marker
+            // A. 顯示「你的位置」Marker
             currentLoc?.let {
                 Marker(
                     state = MarkerState(it),
@@ -303,14 +303,13 @@ fun MapScreen() {
                 )
             }
 
-            // 顯示「目的地」Marker（只有按下「導航」按鈕才會設定）
+            // B. 顯示「目的地」Marker（點擊可清除）
             destination?.let {
                 Marker(
                     state = MarkerState(it),
                     title = "目的地",
                     icon = getResizedBitmapDescriptor(context, R.drawable.marker, 120, 120),
                     onClick = {
-                        // 點擊目的地標記時，取消導航
                         destination = null
                         routePoints = emptyList()
                         true
@@ -318,23 +317,47 @@ fun MapScreen() {
                 )
             }
 
-            // 顯示自訂地點 Marker，點擊後只顯示對話框，不馬上畫路線
+            // C. 顯示自訂地點 Marker
             customPoints.forEach { custom ->
                 Marker(
                     state = MarkerState(custom.location),
                     title = custom.name,
                     icon = getResizedBitmapDescriptor(context, R.drawable.marker, 80, 80),
                     onClick = {
-                        // 只顯示對話框，不設定 destination
                         selectedPoint = custom
-                        false // 保留 InfoWindow 行為
+                        false
                     }
                 )
             }
 
-            // 繪製路線
+            // D. 畫三段 Polyline，分別顯示灰色虛線與藍色實線
+            // D1. 起點（currentLoc）→ 路線第一點（灰色虛線）
+            if (currentLoc != null && routePoints.isNotEmpty()) {
+                val firstOnRoad = routePoints.first()
+                Polyline(
+                    points = listOf(currentLoc!!, firstOnRoad),
+                    width = 6f,
+                    color = Color.Gray,
+                    pattern = dashPattern
+                )
+            }
+            // D2. 路線主段（藍色實線）
             if (routePoints.isNotEmpty()) {
-                Polyline(points = routePoints, width = 6f, color = Color.Blue)
+                Polyline(
+                    points = routePoints,
+                    width = 12f,
+                    color = Color.Blue
+                )
+            }
+            // D3. 路線最後一點→目的地（灰色虛線）
+            if (routePoints.isNotEmpty() && destination != null) {
+                val lastOnRoad = routePoints.last()
+                Polyline(
+                    points = listOf(lastOnRoad, destination!!),
+                    width = 6f,
+                    color = Color.Gray,
+                    pattern = dashPattern
+                )
             }
         }
 
@@ -353,12 +376,10 @@ fun MapScreen() {
         AnimatedVisibility(
             visible = errorMsg != null,
             enter = fadeIn(tween(300)) + slideInVertically(
-                initialOffsetY = { -100 },
-                animationSpec = tween(300)
+                initialOffsetY = { -100 }, animationSpec = tween(300)
             ),
             exit = fadeOut(tween(300)) + slideOutVertically(
-                targetOffsetY = { -100 },
-                animationSpec = tween(300)
+                targetOffsetY = { -100 }, animationSpec = tween(300)
             )
         ) {
             Box(
@@ -382,7 +403,7 @@ fun MapScreen() {
             }
         }
 
-        // 8. 若 selectedPoint != null，就顯示自訂介紹對話框，取消在最左、導航在最右
+        // 9. 顯示自訂介紹對話框
         selectedPoint?.let { point ->
             AlertDialog(
                 onDismissRequest = { selectedPoint = null },
@@ -395,9 +416,9 @@ fun MapScreen() {
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        // 按下「導航」才設定目的地並畫路線
                         destination = point.location
                         routePoints = emptyList()
+                        lastRerouteLoc = currentLoc
                         drawRoute(
                             origin = currentLoc,
                             dest = point.location,
@@ -425,6 +446,13 @@ fun MapScreen() {
     }
 }
 
+// Utility：計算兩點距離（單位：公尺）
+fun distanceBetween(a: LatLng, b: LatLng): Float {
+    val result = FloatArray(1)
+    Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, result)
+    return result[0]
+}
+
 // Utility：縮放 Bitmap 並回傳給 Marker 用
 fun getResizedBitmapDescriptor(
     context: Context,
@@ -434,7 +462,7 @@ fun getResizedBitmapDescriptor(
 ): com.google.android.gms.maps.model.BitmapDescriptor {
     val imageBitmap = BitmapFactory.decodeResource(context.resources, resId)
     val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(imageBitmap, width, height, false)
-    return BitmapDescriptorFactory.fromBitmap(scaledBitmap)
+    return com.google.android.gms.maps.model.BitmapDescriptorFactory.fromBitmap(scaledBitmap)
 }
 
 fun drawRoute(
@@ -451,7 +479,12 @@ fun drawRoute(
     onStart()
     val o = "${origin.latitude},${origin.longitude}"
     val d = "${dest.latitude},${dest.longitude}"
-    RetrofitInstance.api.getDirections(o, d, apiKey = "AIzaSyDbCPl8a9m7dGMgTqF2GFL_cPSRjV_hiOQ")
+    RetrofitInstance.api.getDirections(
+        origin = o,
+        destination = d,
+        mode = "walking",
+        apiKey = "AIzaSyDbCPl8a9m7dGMgTqF2GFL_cPSRjV_hiOQ"
+    )
         .enqueue(object : Callback<com.example.project250311.Map.model.DirectionsResponse> {
             override fun onResponse(
                 call: Call<com.example.project250311.Map.model.DirectionsResponse>,
