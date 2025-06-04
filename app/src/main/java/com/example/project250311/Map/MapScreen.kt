@@ -39,7 +39,7 @@ import com.google.android.gms.maps.model.Dot
 import com.google.android.gms.maps.model.Gap
 import com.google.android.gms.maps.model.PatternItem
 
-// 1. CustomPoint 包含 description，顯示介紹對話框
+// 1. CustomPoint 包含 description，用於顯示介紹對話框
 data class CustomPoint(
     val location: LatLng,
     val name: String,
@@ -53,7 +53,7 @@ fun MapScreen() {
     val fusedClient = remember { LocationServices.getFusedLocationProviderClient(context) }
     val scope = rememberCoroutineScope()
 
-    // 2. 初始鏡頭設校園中心
+    // 2. 初始鏡頭：校園中心
     val defaultLatLng = LatLng(22.7366, 121.0675)
     val cameraState = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(defaultLatLng, 15f)
@@ -71,6 +71,7 @@ fun MapScreen() {
     var isRouting by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
     var selectedPoint by remember { mutableStateOf<CustomPoint?>(null) }
+    var travelTimeText by remember { mutableStateOf<String?>(null) }
 
     // 4. 自訂地點列表
     val customPoints = remember {
@@ -196,7 +197,7 @@ fun MapScreen() {
                     val newLatLng = LatLng(loc.latitude, loc.longitude)
                     currentLoc = newLatLng
 
-                    // 只有當使用者移動超過一定距離（例如 20 公尺）才重新路線
+                    // 只有使用者移動超過 20 公尺時才重新路線
                     destination?.let { dest ->
                         val prev = lastRerouteLoc
                         if (prev == null || distanceBetween(prev, newLatLng) > 20f) {
@@ -205,9 +206,12 @@ fun MapScreen() {
                                 origin = newLatLng,
                                 dest = dest,
                                 onStart = { isRouting = true },
-                                onSuccess = {
+                                onSuccess = { points ->
                                     isRouting = false
-                                    routePoints = it
+                                    routePoints = points
+                                },
+                                onTime = { timeText ->
+                                    travelTimeText = timeText
                                 },
                                 onError = {
                                     isRouting = false
@@ -271,17 +275,21 @@ fun MapScreen() {
             cameraPositionState = cameraState,
             properties = MapProperties(isMyLocationEnabled = permissionGranted),
             onMapClick = { latLng ->
-                // 使用者在空白處點擊：設定新的目的地，清除上次路線並立即計算
+                // 使用者在空白處點擊：設定新的目的地，重置計數並立即計算
                 destination = latLng
                 routePoints = emptyList()
                 lastRerouteLoc = currentLoc  // 確保下次會重新繪一條
+                travelTimeText = null
                 drawRoute(
                     origin = currentLoc,
                     dest = latLng,
                     onStart = { isRouting = true },
-                    onSuccess = {
+                    onSuccess = { points ->
                         isRouting = false
-                        routePoints = it
+                        routePoints = points
+                    },
+                    onTime = { timeText ->
+                        travelTimeText = timeText
                     },
                     onError = {
                         isRouting = false
@@ -303,15 +311,16 @@ fun MapScreen() {
                 )
             }
 
-            // B. 顯示「目的地」Marker（點擊可清除）
-            destination?.let {
+            // B. 顯示「目的地」Marker，點擊直接清除
+            destination?.let { destLatLng ->
                 Marker(
-                    state = MarkerState(it),
+                    state = MarkerState(destLatLng),
                     title = "目的地",
                     icon = getResizedBitmapDescriptor(context, R.drawable.marker, 120, 120),
                     onClick = {
                         destination = null
                         routePoints = emptyList()
+                        travelTimeText = null
                         true
                     }
                 )
@@ -330,7 +339,7 @@ fun MapScreen() {
                 )
             }
 
-            // D. 畫三段 Polyline，分別顯示灰色虛線與藍色實線
+            // D. 畫三段 Polyline：灰色虛線 + 藍色實線 + 灰色虛線
             // D1. 起點（currentLoc）→ 路線第一點（灰色虛線）
             if (currentLoc != null && routePoints.isNotEmpty()) {
                 val firstOnRoad = routePoints.first()
@@ -370,6 +379,24 @@ fun MapScreen() {
                     .background(Color.White.copy(alpha = 0.6f), shape = MaterialTheme.shapes.small)
                     .padding(8.dp)
             )
+        }
+
+        // 顯示費時文字於底部
+        travelTimeText?.let { text ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp)
+                    .background(Color.White.copy(alpha = 0.8f), shape = MaterialTheme.shapes.medium)
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    text = "預計花費：$text",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.DarkGray
+                )
+            }
         }
 
         // 顯示錯誤訊息（三秒後自動消失）
@@ -416,16 +443,21 @@ fun MapScreen() {
                 },
                 confirmButton = {
                     TextButton(onClick = {
+                        // 按下「導航」才設定目的地並畫路線
                         destination = point.location
                         routePoints = emptyList()
                         lastRerouteLoc = currentLoc
+                        travelTimeText = null
                         drawRoute(
                             origin = currentLoc,
                             dest = point.location,
                             onStart = { isRouting = true },
-                            onSuccess = {
+                            onSuccess = { points ->
                                 isRouting = false
-                                routePoints = it
+                                routePoints = points
+                            },
+                            onTime = { timeText ->
+                                travelTimeText = timeText
                             },
                             onError = {
                                 isRouting = false
@@ -465,11 +497,15 @@ fun getResizedBitmapDescriptor(
     return com.google.android.gms.maps.model.BitmapDescriptorFactory.fromBitmap(scaledBitmap)
 }
 
+/**
+ * drawRoute 新增 onTime callback：從 API 回應中取出「duration.text」並回傳
+ */
 fun drawRoute(
     origin: LatLng?,
     dest: LatLng,
     onStart: () -> Unit = {},
     onSuccess: (List<LatLng>) -> Unit,
+    onTime: (String) -> Unit,
     onError: (String) -> Unit
 ) {
     if (origin == null) {
@@ -491,10 +527,14 @@ fun drawRoute(
                 response: Response<com.example.project250311.Map.model.DirectionsResponse>
             ) {
                 if (response.isSuccessful) {
-                    val points = response.body()?.routes
-                        ?.firstOrNull()
-                        ?.overview_polyline
-                        ?.points
+                    val body = response.body()
+                    val route = body?.routes?.firstOrNull()
+                    val leg = route?.legs?.firstOrNull()
+                    val points = route?.overview_polyline?.points
+
+                    val durationText = leg?.duration?.text ?: "未知時間"
+                    onTime(durationText)
+
                     if (!points.isNullOrEmpty()) {
                         onSuccess(PolylineUtils.decodePolyline(points))
                     } else {
