@@ -36,11 +36,11 @@ import com.example.project250311.Schedule.Note.EnhancedNoteScreen
 import com.example.project250311.Schedule.Note.NoteListScreen
 import com.example.project250311.Schedule.Notice.NotificationManagerScreen
 import com.example.project250311.Map.MapScreen  // 新增 import
+import com.example.project250311.Schedule.Food.FoodScreen  // 新增 import
 import com.example.project250311.ui.theme.Project250311Theme
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
-    // 使用 viewModels 委託創建 CourseViewModel 實例
     private val courseViewModel: CourseViewModel by viewModels {
         object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -115,7 +115,8 @@ fun AppWithNavigation(
         NavigationItem("schedule", "課程表", Icons.Default.CalendarToday),
         NavigationItem("leave", "請假系統", Icons.Default.ExitToApp),
         NavigationItem("notes", "筆記", Icons.Default.Note),
-        NavigationItem("notice", "通知", Icons.Default.Notifications)
+        NavigationItem("notice", "通知", Icons.Default.Notifications),
+        NavigationItem("food", "學餐轉盤", Icons.Default.Restaurant)  // 新增學餐轉盤選項
     )
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -265,6 +266,11 @@ fun AppNavHost(
         // 通知設定
         composable("notice") {
             NotificationManagerScreen(navController)
+        }
+
+        // 學餐轉盤
+        composable("food") {
+            FoodScreen()
         }
     }
 }
