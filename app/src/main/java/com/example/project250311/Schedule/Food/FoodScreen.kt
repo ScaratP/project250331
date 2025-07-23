@@ -268,14 +268,14 @@ private fun getOperationScheduleText(schedules: List<OperationSchedule>): String
 
 @Composable
 fun FoodScreen() {
-    // 預設食物選項庫
+    // 更新預設食物選項庫的顏色 - 使用圖片中的色盤顏色
     val allPredefinedFoodOptions = remember {
         mutableStateListOf(
             // 第一學生宿舍餐飲中心
             FoodOption(
                 id = 1,
                 name = "台東佳學便利商店",
-                color = Color(0xFF9B59B6),
+                color = Color(0xFF66C9DD), // 天藍色
                 description = "生活用品、雜貨、冷藏、零嘴等商品，只收現金，可刷載具",
                 contactNumber = "0921-599-075",
                 isVisible = true,
@@ -294,7 +294,7 @@ fun FoodScreen() {
             FoodOption(
                 id = 2,
                 name = "天使麻辣滷味",
-                color = Color(0xFFD35400),
+                color = Color(0xFF90D5E4), // 淺藍色
                 description = "麻辣湯、不辣辣湯滷，鍋物(各類滷品，自由配料)，只收現金，現點現做",
                 contactNumber = "517-937",
                 isVisible = true,
@@ -312,7 +312,7 @@ fun FoodScreen() {
             FoodOption(
                 id = 3,
                 name = "厚道",
-                color = Color(0xFFE74C3C),
+                color = Color(0xFF247A8C), // 深青色
                 description = "便當、飯麵、水果、飲料，不定時公休，需先在社群上點餐",
                 contactNumber = "0905-817-827",
                 website = "https://line.me/ti/g2/bfYTZDASyaeNjPYwpmKRpmoGi0fxrrd4P0VOpg?utm_source=invitation&utm_medium=link_copy&utm_campaign=default",
@@ -331,7 +331,7 @@ fun FoodScreen() {
             FoodOption(
                 id = 4,
                 name = "我家的店",
-                color = Color(0xFF2E8B57),
+                color = Color(0xFF388A94), // 青綠色
                 description = "便當類，現點現做，售完為止",
                 contactNumber = "0908-911-546",
                 isVisible = true,
@@ -349,7 +349,7 @@ fun FoodScreen() {
             FoodOption(
                 id = 5,
                 name = "ALOHA POKE",
-                color = Color(0xFF4A90E2),
+                color = Color(0xFF44A8BC), // 藍綠色
                 description = "夏威夷食材(漢堡類、沙拉、主食、側食、多元搭配)",
                 contactNumber = "0909-955-545",
                 website = "https://line.me/ti/p/~@047gtfpr",
@@ -367,7 +367,7 @@ fun FoodScreen() {
             FoodOption(
                 id = 6,
                 name = "小鐵匠廚房",
-                color = Color(0xFF8E44AD),
+                color = Color(0xFF5DBFD1), // 亮青色
                 description = "【便當】蔬食/經濟/雞排/豬排/雞腿【炒飯】雞排/豬排/雞腿，可先在LINE上預訂及查看當天菜色",
                 contactNumber = "0907-292-117",
                 isVisible = true,
@@ -387,7 +387,7 @@ fun FoodScreen() {
             FoodOption(
                 id = 7,
                 name = "采冉食坊",
-                color = Color(0xFFF39C12),
+                color = Color(0xFF177785), // 深青綠色
                 description = "早/午餐、甜點/麵包、飲品/水果類",
                 isVisible = true,
                 openDays = setOf(WeekDay.MONDAY, WeekDay.TUESDAY, WeekDay.WEDNESDAY, 
@@ -404,7 +404,7 @@ fun FoodScreen() {
             FoodOption(
                 id = 8,
                 name = "東大膳務部",
-                color = Color(0xFF27AE60),
+                color = Color(0xFF5DBFD1), // 亮青色
                 description = "早餐類",
                 contactNumber = "518-003",
                 isVisible = true,
@@ -421,7 +421,7 @@ fun FoodScreen() {
             FoodOption(
                 id = 9,
                 name = "炒鬧食堂",
-                color = Color(0xFF7F8C8D),
+                color = Color(0xFF177785), // 深青綠色
                 description = "炒飯、鍋燒麵、湯品、便當",
                 contactNumber = "0953-391-961",
                 isVisible = true,
@@ -439,7 +439,7 @@ fun FoodScreen() {
             FoodOption(
                 id = 10,
                 name = "鼎泰珍牛排館",
-                color = Color(0xFF1ABC9C),
+                color = Color(0xFF44A8BC), // 藍綠色
                 description = "排餐、便當、麵類、菜飯、肉燥飯、咖哩飯、雞肉飯",
                 contactNumber = "0933-626-695",
                 isVisible = true,
@@ -457,7 +457,7 @@ fun FoodScreen() {
             FoodOption(
                 id = 11,
                 name = "巴布阿甘飲食店",
-                color = Color(0xFF34495E),
+                color = Color(0xFF66C9DD), // 天藍色
                 description = "便當、咖哩飯、壽喜燒、牛肉麵、乾拌麵、鐵板麵、冰淇淋",
                 contactNumber = "517-518",
                 isVisible = true,
@@ -475,7 +475,7 @@ fun FoodScreen() {
             FoodOption(
                 id = 12,
                 name = "鮮茶道",
-                color = Color(0xFF34495E),
+                color = Color(0xFF5DBFD1), // 亮青色
                 description = "飲料店",
                 contactNumber = "510-168",
                 isVisible = true,
@@ -494,7 +494,7 @@ fun FoodScreen() {
             FoodOption(
                 id = 14,
                 name = "東大健康茶飲",
-                color = Color(0xFF3498DB),
+                color = Color(0xFF44A8BC), // 藍綠色
                 description = "各式飲品(杯裝/桶裝)、水餃、厚片/熱壓吐司、各式麵類/麺線",
                 contactNumber = "517-968",
                 isVisible = true,
@@ -512,7 +512,7 @@ fun FoodScreen() {
             FoodOption(
                 id = 15,
                 name = "7-ELEVEN",
-                color = Color(0xFFE74C3C),
+                color = Color(0xFF177785), // 深青綠色
                 description = "便利商店",
                 contactNumber = "518-145",
                 isVisible = true,
@@ -531,7 +531,7 @@ fun FoodScreen() {
             FoodOption(
                 id = 16,
                 name = "黎饗食光美食",
-                color = Color(0xFF9B59B6),
+                color = Color(0xFF90D5E4), // 淺藍色
                 description = "海苔飯手卷、麵/飯食類、飲品、熱壓吐司、鬆/捲餅",
                 contactNumber = "0960-771-020",
                 isVisible = true,
@@ -547,7 +547,7 @@ fun FoodScreen() {
             FoodOption(
                 id = 17,
                 name = "妙軒早餐店",
-                color = Color(0xFFD35400),
+                color = Color(0xFF388A94), // 青綠色
                 description = "早餐類，老闆很看心情上班",
                 contactNumber = "0912-759-332",
                 isVisible = true,
@@ -677,14 +677,14 @@ fun FoodScreen() {
     // 預設顏色選項 (僅用於顯示)
     val colorOptions = remember {
         listOf(
-            Color(0xFF2E8B57), // 深綠色
-            Color(0xFFFF6B35), // 橘紅色
-            Color(0xFF4A90E2), // 藍色
-            Color(0xFF9B59B6), // 紫色
-            Color(0xFFE74C3C), // 紅色
-            Color(0xFFF39C12), // 橙色
-            Color(0xFF27AE60), // 綠色
-            Color(0xFF1ABC9C)  // 青綠色
+            Color(0xFF177785), // 深青綠色
+            Color(0xFF247A8C), // 深青色
+            Color(0xFF388A94), // 青綠色
+            Color(0xFF44A8BC), // 藍綠色
+            Color(0xFF5DBFD1), // 亮青色
+            Color(0xFF66C9DD), // 天藍色
+            Color(0xFF90D5E4), // 淺藍色
+            Color(0xFFB6E3EC)  // 最淺的藍色
         )
     }
 
@@ -1025,9 +1025,9 @@ fun FoodScreen() {
                 ) {
                     Icon(
                         imageVector = when(currentMealType) {
-                            MealType.BREAKFAST -> Icons.Default.WbSunny
-                            MealType.LUNCH -> Icons.Default.Nightlight
-                            MealType.DINNER -> Icons.Default.Coffee
+                            MealType.BREAKFAST -> Icons.Default.Coffee
+                            MealType.LUNCH -> Icons.Default.WbSunny
+                            MealType.DINNER -> Icons.Default.Nightlight
                             else -> Icons.Default.Coffee
                         },
                         contentDescription = "切換餐點類型",
@@ -1574,6 +1574,22 @@ private fun DrawScope.drawFoodWheel(foodOptions: List<FoodOption>) {
     val sectionAngle = 360f / foodOptions.size
     val calendar = Calendar.getInstance() // 獲取當前時間以檢查營業狀態
     
+    // 繪製輪盤的外圈陰影 - 更淡的陰影
+    drawCircle(
+        color = Color.Black.copy(alpha = 0.15f),
+        radius = radius + 3.dp.toPx(),
+        center = center,
+        style = Fill
+    )
+    
+    // 繪製輪盤底層 - 改為淺藍綠色背景
+    drawCircle(
+        color = Color(0xFF90D5E4).copy(alpha = 0.3f),
+        radius = radius,
+        center = center,
+        style = Fill
+    )
+    
     foodOptions.forEachIndexed { index, option ->
         // 使扇形從正上方開始
         val startAngle = index * sectionAngle - 90f
@@ -1581,12 +1597,31 @@ private fun DrawScope.drawFoodWheel(foodOptions: List<FoodOption>) {
         // 判斷當前是否營業
         val isOpen = isOpenNow(calendar, option)
         
-        // 繪製扇形，非營業中店家顏色淡化
-        val sectionColor = if (isOpen) option.color else option.color.copy(alpha = 0.5f)
+        // 創建更和諧的顏色 - 使用色盤中的顏色
+        val baseColor = option.color
         
-        // 繪製扇形
+        // 從中心到邊緣的漸變色 - 更柔和的過渡
+        val colors = if (isOpen) {
+            listOf(
+                baseColor.copy(alpha = 0.85f),  // 接近中心的顏色（輕微透明）
+                baseColor.copy(alpha = 0.95f),  // 中間過渡色
+                baseColor                        // 邊緣顏色（完全不透明）
+            )
+        } else {
+            listOf(
+                baseColor.copy(alpha = 0.4f),   // 接近中心的顏色（更透明）
+                baseColor.copy(alpha = 0.5f),   // 中間過渡色
+                baseColor.copy(alpha = 0.6f)    // 邊緣顏色（半透明）
+            )
+        }
+        
+        // 繪製帶有漸變的扇形 - 使用柔和的漸變
         drawArc(
-            color = sectionColor,
+            brush = Brush.radialGradient(
+                colors = colors,
+                center = center,
+                radius = radius
+            ),
             startAngle = startAngle,
             sweepAngle = sectionAngle,
             useCenter = true,
@@ -1594,15 +1629,15 @@ private fun DrawScope.drawFoodWheel(foodOptions: List<FoodOption>) {
             size = size
         )
         
-        // 繪製邊框
+        // 繪製更美觀的邊框 - 白色半透明
         drawArc(
-            color = Color.White,
+            color = Color.White.copy(alpha = 0.6f),
             startAngle = startAngle,
             sweepAngle = sectionAngle,
             useCenter = true,
             topLeft = Offset.Zero,
             size = size,
-            style = Stroke(width = 3.dp.toPx())
+            style = Stroke(width = 1.5f.dp.toPx())
         )
         
         // 繪製文字
@@ -1614,14 +1649,31 @@ private fun DrawScope.drawFoodWheel(foodOptions: List<FoodOption>) {
         rotate(textAngle + 90f, pivot = Offset(textX, textY)) {
             drawContext.canvas.nativeCanvas.apply {
                 val fontSize = if (option.name.length > 6) 24f else 32f // 根據文字長度調整大小
-                val paint = android.graphics.Paint().apply {
+                
+                // 繪製文字陰影 - 增強可讀性
+                val shadowPaint = android.graphics.Paint().apply {
+                    this.color = android.graphics.Color.BLACK
+                    textSize = fontSize
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    textAlign = android.graphics.Paint.Align.CENTER
+                    alpha = 180 // 陰影透明度
+                }
+                
+                // 繪製更多層的陰影增強立體感
+                for (i in 1..3) {
+                    val offset = i * 1f
+                    drawText(option.name, textX + offset, textY + offset, shadowPaint)
+                }
+                
+                // 主要文字
+                val textPaint = android.graphics.Paint().apply {
                     this.color = android.graphics.Color.WHITE
                     textSize = fontSize
                     typeface = android.graphics.Typeface.DEFAULT_BOLD
                     textAlign = android.graphics.Paint.Align.CENTER
-                    setShadowLayer(4f, 2f, 2f, android.graphics.Color.BLACK)
+                    setShadowLayer(2f, 1f, 1f, android.graphics.Color.BLACK)
                 }
-                drawText(option.name, textX, textY, paint)
+                drawText(option.name, textX, textY, textPaint)
                 
                 // 如果不營業，添加小標記
                 if (!isOpen) {
@@ -1638,6 +1690,30 @@ private fun DrawScope.drawFoodWheel(foodOptions: List<FoodOption>) {
             }
         }
     }
+    
+    // 繪製中心點裝飾 - 使用圖片中淺藍色
+    drawCircle(
+        color = Color(0xFF90D5E4),
+        radius = radius * 0.12f,
+        center = center,
+        style = Fill
+    )
+    
+    // 中心點外圈 - 使用深青綠色
+    drawCircle(
+        color = Color(0xFF177785),
+        radius = radius * 0.12f,
+        center = center,
+        style = Stroke(width = 2.dp.toPx())
+    )
+    
+    // 添加中心點內部裝飾
+    drawCircle(
+        color = Color.White.copy(alpha = 0.7f),
+        radius = radius * 0.06f,
+        center = center,
+        style = Fill
+    )
 }
 
 // 修正選中食物的計算邏輯，添加錯誤處理
@@ -1692,8 +1768,7 @@ private fun determineMealTypeFromSchedule(foodOption: FoodOption): MealType {
     
     return when {
         // 全天營業的店家歸類為全天
-        operationTimes.contains(OperationTime.ALL_DAY) -> MealType.ALL
-        
+        operationTimes.contains(OperationTime.ALL_DAY) -> MealType.ALL        
         // 只有早上營業 → 早餐店
         operationTimes.contains(OperationTime.MORNING) &&
         !operationTimes.contains(OperationTime.AFTERNOON) &&
