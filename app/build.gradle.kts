@@ -8,8 +8,8 @@ plugins {
 
 buildscript {
     repositories {
-        google()  // 添加 Google 仓库
-        mavenCentral()  // 添加 Maven 仓库
+        google()  // 添加 Google 倉庫
+        mavenCentral()  // 添加 Maven 倉庫
     }
     dependencies {
         classpath("com.google.android.libraries.mapsplatform.secrets-gradle-plugin:secrets-gradle-plugin:2.0.1")
@@ -122,5 +122,13 @@ dependencies {
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
 
+    // Add Gson for JSON serialization
+    implementation("com.google.code.gson:gson:2.10.1")
+
+    // https://github.com/MikeOrtiz/TouchImageView
+    implementation ("com.github.MikeOrtiz:TouchImageView:3.7.1")
+
+    // 添加 Coil 庫
+    implementation("io.coil-kt:coil-compose:2.5.0")
 
 }
