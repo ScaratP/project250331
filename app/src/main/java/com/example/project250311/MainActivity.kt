@@ -112,7 +112,7 @@ fun AppWithNavigation(
 
     val items = listOf(
         NavigationItem("map", "地圖", Icons.Default.Map),
-        NavigationItem("schedule", "課程表", Icons.Default.CalendarToday),
+        NavigationItem("schedule", "課表", Icons.Default.CalendarToday),
         NavigationItem("leave", "請假系統", Icons.Default.ExitToApp),
         NavigationItem("notes", "筆記", Icons.Default.Note),
         NavigationItem("notice", "通知", Icons.Default.Notifications),
@@ -205,7 +205,7 @@ fun AppNavHost(
             MapScreen()
         }
 
-        // 課程表畫面
+        // 課表畫面
         composable("schedule") {
             ScheduleScreen(courseViewModel)
         }

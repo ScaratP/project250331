@@ -94,7 +94,7 @@ fun ScheduleScreen(viewModel: CourseViewModel) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "課程表",
+                    text = "課表",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
@@ -350,7 +350,7 @@ fun ScheduleTable(scheduleList: List<Schedule>, onCourseSelected: (List<Schedule
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        text = "課程表已載入但無時段資料",
+                                        text = "課表已載入但無時段資料",
                                         fontSize = 14.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         textAlign = TextAlign.Center
