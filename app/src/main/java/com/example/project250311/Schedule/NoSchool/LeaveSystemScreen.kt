@@ -1,4 +1,3 @@
-// 儲存位置: app/src/main/java/com/example/project250311/Schedule/NoSchool/LeaveSystemScreen.kt
 package com.example.project250311.Schedule.NoSchool
 
 import android.annotation.SuppressLint
@@ -69,74 +68,61 @@ fun LeaveMainScreen(
     onViewHistory: () -> Unit,
     onBack: () -> Unit
 ) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("請假系統") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                }
-            )
-        }
-    ) { paddingValues ->
-        Column(
+    // 移除 Scaffold 的重複定義，因為 MainActivity 已經提供了 TopAppBar
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // 主要選項卡片
+        Card(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(24.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
+                .fillMaxWidth()
+                .padding(16.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
         ) {
-            // 主要選項卡片
-            Card(
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
-                Column(
-                    modifier = Modifier
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(24.dp)
-                ) {
-                    Text(
-                        text = "請假系統功能",
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
+                Text(
+                    text = "請假系統功能",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+
+                Button(
+                    onClick = onRequestLeave,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
                     )
+                ) {
+                    Icon(
+                        Icons.Default.Edit,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text("我要請假")
+                }
 
-                    Button(
-                        onClick = onRequestLeave,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        )
-                    ) {
-                        Icon(
-                            Icons.Default.Edit,
-                            contentDescription = null,
-                            modifier = Modifier.padding(end = 8.dp)
-                        )
-                        Text("我要請假")
-                    }
-
-                    Button(
-                        onClick = onViewHistory,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.secondary
-                        )
-                    ) {
-                        Icon(
-                            Icons.Default.List,
-                            contentDescription = null,
-                            modifier = Modifier.padding(end = 8.dp)
-                        )
-                        Text("查看請假紀錄")
-                    }
+                Button(
+                    onClick = onViewHistory,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondary
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.List,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text("查看請假紀錄")
                 }
             }
         }
@@ -167,56 +153,43 @@ fun LeaveHistoryScreen(
         }
         .groupBy { it.courseName }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("請假紀錄") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp)
-        ) {
-            // 搜尋欄
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                label = { Text("搜尋課程、類型、請假類型、日期") },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
+    // 移除 Scaffold 的重複定義
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        // 搜尋欄
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            label = { Text("搜尋課程、類型、請假類型、日期") },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
 
-            Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-            if (isLoading) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
-                }
-            } else if (groupedLeaves.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("沒有符合條件的請假紀錄", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    groupedLeaves.forEach { (courseName, leavesForCourse) ->
-                        item {
-                            LeaveCard(courseName, leavesForCourse)
-                        }
+        if (isLoading) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
+        } else if (groupedLeaves.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("沒有符合條件的請假紀錄", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                groupedLeaves.forEach { (courseName, leavesForCourse) ->
+                    item {
+                        LeaveCard(courseName, leavesForCourse)
                     }
                 }
             }
@@ -306,108 +279,93 @@ fun GetLeaveDataScreen(
     val leaveList by viewModel.allLeaves.observeAsState(emptyList())
     var showWebView by remember { mutableStateOf(true) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("請假申請") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+    // 移除 Scaffold 的重複定義
+    Column(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        if (showWebView) {
+            WebViewLeaveComponent(
+                url = "https://casauth.nttu.edu.tw/cas/login?service=https%3a%2f%2faskleave.nttu.edu.tw%2findex.aspx",
+                onLoginSuccess = { newCookies ->
+                    cookies = newCookies
+                    onLoginSuccess(newCookies)
+                    webViewLoaded = true
+                },
+                onLeaveAppClicked = { jsonString ->
+                    if (jsonString != null) {
+                        viewModel.viewModelScope.launch {
+                            // 解析 JSON
+                            val gson = Gson()
+                            val type = object : TypeToken<List<LeaveData>>() {}.type
+                            val fetchedData: List<LeaveData> = gson.fromJson(jsonString, type)
+
+                            fetchedData.forEach { leaveData ->
+                                Log.d("LeaveScreen", "解析到請假資料: $leaveData")
+                                viewModel.insert(leaveData)
+                            }
+                            showWebView = false
+                        }
                     }
                 }
             )
-        }
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-        ) {
-            if (showWebView) {
-                WebViewLeaveComponent(
-                    url = "https://casauth.nttu.edu.tw/cas/login?service=https%3a%2f%2faskleave.nttu.edu.tw%2findex.aspx",
-                    onLoginSuccess = { newCookies ->
-                        cookies = newCookies
-                        onLoginSuccess(newCookies)
-                        webViewLoaded = true
-
-                                            },
-                    onLeaveAppClicked = { jsonString ->
-                        if (jsonString != null) {
-                            viewModel.viewModelScope.launch {
-                                // 解析 JSON
-                                val gson = Gson()
-                                val type = object : TypeToken<List<LeaveData>>() {}.type
-                                val fetchedData: List<LeaveData> = gson.fromJson(jsonString, type)
-
-                                fetchedData.forEach { leaveData ->
-                                    Log.d("LeaveScreen", "解析到請假資料: $leaveData")
-                                    viewModel.insert(leaveData)
-                                }
-                                showWebView = false
-                            }
+        } else {
+            // 顯示已提交的請假資料
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                if (leaveList.isEmpty()) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "尚未提交請假資料",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(onClick = { showWebView = true }) {
+                            Text("重新載入請假頁面")
                         }
                     }
-                )
-            } else {
-                // 顯示已提交的請假資料
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (leaveList.isEmpty()) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Text(
-                                text = "尚未提交請假資料",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Button(onClick = { showWebView = true }) {
-                                Text("重新載入請假頁面")
-                            }
-                        }
-                    } else {
-                        Column {
-                            Text(
-                                text = "已提交以下請假申請:",
-                                style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.padding(16.dp)
-                            )
-                            LazyColumn {
-                                items(leaveList) { leave ->
-                                    Card(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(16.dp),
-                                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                } else {
+                    Column {
+                        Text(
+                            text = "已提交以下請假申請:",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(16.dp)
+                        )
+                        LazyColumn {
+                            items(leaveList) { leave ->
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(16.dp)
                                     ) {
-                                        Column(
-                                            modifier = Modifier.padding(16.dp)
-                                        ) {
-                                            Text(
-                                                text = "課程: ${leave.courseName}",
-                                                style = MaterialTheme.typography.titleMedium
-                                            )
-                                            Text("類型: ${leave.recordType}")
-                                            Text("請假類型: ${getLeaveTypeName(leave.leave_type)}")
-                                            Text("日期: ${leave.date_leave}")
-                                            Text("時數: ${leave.hours} 小時")
-                                        }
+                                        Text(
+                                            text = "課程: ${leave.courseName}",
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                        Text("類型: ${leave.recordType}")
+                                        Text("請假類型: ${getLeaveTypeName(leave.leave_type)}")
+                                        Text("日期: ${leave.date_leave}")
+                                        Text("時數: ${leave.hours} 小時")
                                     }
                                 }
-                                item {
-                                    Button(
-                                        onClick = { showWebView = true },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(16.dp)
-                                    ) {
-                                        Text("重新載入請假頁面")
-                                    }
+                            }
+                            item {
+                                Button(
+                                    onClick = { showWebView = true },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp)
+                                ) {
+                                    Text("重新載入請假頁面")
                                 }
                             }
                         }

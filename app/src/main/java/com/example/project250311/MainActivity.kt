@@ -8,11 +8,13 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -30,6 +32,7 @@ import androidx.navigation.navArgument
 import com.example.project250311.Data.AppDatabase
 import com.example.project250311.Data.CourseRepository
 import com.example.project250311.Data.CourseViewModel
+import com.example.project250311.Map.IndoorMap.IndoorMapScreen
 import com.example.project250311.Schedule.GetSchedule.ScheduleScreen
 import com.example.project250311.Schedule.NoSchool.LeaveSystemScreen
 import com.example.project250311.Schedule.Note.EnhancedNoteScreen
@@ -100,6 +103,14 @@ data class NavigationItem(
     val icon: ImageVector
 )
 
+// 定義主分類和子分類結構
+data class MainCategory(
+    val id: String,
+    val title: String,
+    val icon: ImageVector,
+    val subItems: List<NavigationItem>
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppWithNavigation(
@@ -107,83 +118,194 @@ fun AppWithNavigation(
     initialDestination: String = "map"
 ) {
     val navController = rememberNavController()
-    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
-    val scope = rememberCoroutineScope()
+    var showSubMenu by remember { mutableStateOf(false) }
+    var selectedCategory by remember { mutableStateOf<MainCategory?>(null) }
+    val bottomSheetState = rememberModalBottomSheetState()
 
-    val items = listOf(
-        NavigationItem("map", "地圖", Icons.Default.Map),
-        NavigationItem("schedule", "課表", Icons.Default.CalendarToday),
-        NavigationItem("leave", "請假系統", Icons.Default.ExitToApp),
-        NavigationItem("notes", "筆記", Icons.Default.Note),
-        NavigationItem("notice", "通知", Icons.Default.Notifications),
-        NavigationItem("food", "學餐轉盤", Icons.Default.Restaurant)  // 新增學餐轉盤選項
+    // 定義三個主分類及其子選項
+    val mainCategories = listOf(
+        MainCategory(
+            id = "map_category",
+            title = "地圖",
+            icon = Icons.Default.Map,
+            subItems = listOf(
+                NavigationItem("map", "地圖", Icons.Default.Map),
+                NavigationItem("indoormap", "室內地圖", Icons.Default.Star)
+            )
+        ),
+        MainCategory(
+            id = "schedule_category",
+            title = "課表",
+            icon = Icons.Default.CalendarToday,
+            subItems = listOf(
+                NavigationItem("schedule", "課表", Icons.Default.CalendarToday),
+                NavigationItem("leave", "請假系統", Icons.Default.ExitToApp),
+                NavigationItem("notes", "筆記", Icons.Default.Note),
+                NavigationItem("notice", "通知", Icons.Default.Notifications)
+            )
+        ),
+        MainCategory(
+            id = "food_category",
+            title = "學餐轉盤",
+            icon = Icons.Default.Restaurant,
+            subItems = listOf(
+                NavigationItem("food", "學餐轉盤", Icons.Default.Restaurant)
+            )
+        )
     )
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route?.split("/")?.firstOrNull()
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            ModalDrawerSheet {
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = "應用選單",
-                    modifier = Modifier.padding(16.dp),
-                    style = MaterialTheme.typography.titleLarge
-                )
-                Divider()
-                Spacer(modifier = Modifier.height(16.dp))
+    // 根據當前路由找到對應的主分類
+    val currentCategory = mainCategories.find { category ->
+        category.subItems.any { it.route == currentRoute }
+    }
 
-                items.forEach { item ->
-                    NavigationDrawerItem(
-                        icon = { Icon(item.icon, contentDescription = item.title) },
-                        label = { Text(item.title) },
-                        selected = currentRoute == item.route,
+    // 獲取當前頁面標題
+    val currentTitle = currentCategory?.subItems?.find { it.route == currentRoute }?.title
+        ?: mainCategories.find { it.id == currentRoute }?.title
+        ?: "應用"
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(currentTitle) }
+            )
+        },
+        bottomBar = {
+            NavigationBar {
+                mainCategories.forEach { category ->
+                    NavigationBarItem(
+                        icon = { Icon(category.icon, contentDescription = category.title) },
+                        label = { Text(category.title) },
+                        selected = currentCategory?.id == category.id,
                         onClick = {
-                            navController.navigate(item.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
+                            if (category.id == "food_category") {
+                                // 學餐轉盤直接跳轉
+                                navController.navigate("food") {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
                                 }
-                                launchSingleTop = true
-                                restoreState = true
+                            } else {
+                                // 其他分類顯示子選項
+                                selectedCategory = category
+                                showSubMenu = true
                             }
-                            scope.launch {
-                                drawerState.close()
-                            }
-                        },
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                        }
                     )
                 }
             }
         }
-    ) {
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Text(items.find { it.route == currentRoute }?.title ?: "便利貼")
-                    },
-                    navigationIcon = {
-                        IconButton(
-                            onClick = {
-                                scope.launch {
-                                    drawerState.open()
-                                }
-                            }
-                        ) {
-                            Icon(Icons.Default.Menu, contentDescription = "開啟選單")
-                        }
-                    }
-                )
-            }
-        ) { paddingValues -> 
+    ) { paddingValues ->
+        Box(modifier = Modifier.padding(paddingValues)) {
             AppNavHost(
                 navController = navController,
                 courseViewModel = courseViewModel,
                 initialDestination = initialDestination,
-                modifier = Modifier.padding(paddingValues)
+                modifier = Modifier.fillMaxSize()
             )
+        }
+    }
+
+    // 將 ModalBottomSheet 移到 Scaffold 外面
+    if (showSubMenu && selectedCategory != null) {
+        ModalBottomSheet(
+            onDismissRequest = {
+                showSubMenu = false
+                selectedCategory = null
+            },
+            sheetState = bottomSheetState,
+            dragHandle = { BottomSheetDefaults.DragHandle() }
+        ) {
+            SubMenuBottomSheet(
+                category = selectedCategory!!,
+                onItemSelected = { item ->
+                    navController.navigate(item.route) {
+                        popUpTo(navController.graph.findStartDestination().id) {
+                            saveState = true
+                        }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                    showSubMenu = false
+                    selectedCategory = null
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun SubMenuBottomSheet(
+    category: MainCategory,
+    onItemSelected: (NavigationItem) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 32.dp)
+    ) {
+        // 標題
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(vertical = 16.dp)
+        ) {
+            Icon(
+                imageVector = category.icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp)
+            )
+            Text(
+                text = "選擇${category.title}功能",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        
+        // 選項列表
+        category.subItems.forEach { item ->
+            Surface(
+                onClick = { onItemSelected(item) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Icon(
+                        imageVector = item.icon,
+                        contentDescription = item.title,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = item.title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
         }
     }
 }
@@ -203,6 +325,11 @@ fun AppNavHost(
         // 地圖畫面
         composable("map") {
             MapScreen()
+        }
+
+        // 室內地圖畫面
+        composable("indoormap") {
+            IndoorMapScreen()
         }
 
         // 課表畫面
