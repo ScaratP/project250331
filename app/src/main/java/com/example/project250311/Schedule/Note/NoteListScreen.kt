@@ -100,8 +100,6 @@ fun NoteListScreen(
             .padding(16.dp)
     ) {
         Column {
-            Text("便利貼們", fontSize = 24.sp)
-            Spacer(modifier = Modifier.height(8.dp))
 
             // Search bar with date filter
             Row(
@@ -111,7 +109,7 @@ fun NoteListScreen(
                 TextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search notes...") },
+                    placeholder = { Text("搜尋筆記內容") },
                     modifier = Modifier.weight(1f)
                 )
                 Spacer(modifier = Modifier.width(8.dp))

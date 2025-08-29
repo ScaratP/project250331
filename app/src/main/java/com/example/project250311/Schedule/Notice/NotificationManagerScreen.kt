@@ -103,31 +103,6 @@ fun NotificationManagerScreen(navController: NavHostController) {
         .associateWith { groupedCourses[it]!! }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("課程通知管理") },
-                navigationIcon = {
-                    IconButton(onClick = { navController.navigateUp() }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-                            context.startActivity(intent)
-                        }
-                    }) {
-                        Icon(
-                            Icons.Default.Settings,
-                            contentDescription = "通知權限設定",
-                            tint = if (canScheduleExactAlarms) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-            )
-        }
     ) { paddingValues ->
         if (isLoading) {
             Box(
