@@ -4,7 +4,9 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
-import android.graphics.BitmapFactory
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.location.Location
 import android.os.Looper
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -12,15 +14,29 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import com.example.project250311.Map.network.RetrofitInstance
 import com.example.project250311.Map.utils.PolylineUtils
@@ -38,20 +54,26 @@ import com.example.project250311.R
 import com.google.android.gms.maps.model.Dot
 import com.google.android.gms.maps.model.Gap
 import com.google.android.gms.maps.model.PatternItem
+import androidx.navigation.NavController
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 
 // 1. CustomPoint 包含 description，用於顯示介紹對話框
 data class CustomPoint(
     val location: LatLng,
     val name: String,
-    val description: String
+    val description: String,
+    val hasIndoorMap: Boolean = false // 新增標記
 )
 
 @SuppressLint("MissingPermission")
 @Composable
-fun MapScreen() {
+fun MapScreen(
+    navController: NavController? = null
+) {
     val context = LocalContext.current
     val fusedClient = remember { LocationServices.getFusedLocationProviderClient(context) }
     val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
 
     // 2. 初始鏡頭：校園中心
     val defaultLatLng = LatLng(22.7366, 121.0675)
@@ -62,24 +84,14 @@ fun MapScreen() {
     // 虛線樣式
     val dashPattern = listOf<PatternItem>(Dot(), Gap(10f))
 
-    // 3. 狀態變數
-    var permissionGranted by remember { mutableStateOf(false) }
-    var currentLoc by remember { mutableStateOf<LatLng?>(null) }
-    var lastRerouteLoc by remember { mutableStateOf<LatLng?>(null) } // 上次重新路線用的位置
-    var destination by remember { mutableStateOf<LatLng?>(null) }
-    var routePoints by remember { mutableStateOf<List<LatLng>>(emptyList()) }
-    var isRouting by remember { mutableStateOf(false) }
-    var errorMsg by remember { mutableStateOf<String?>(null) }
-    var selectedPoint by remember { mutableStateOf<CustomPoint?>(null) }
-    var travelTimeText by remember { mutableStateOf<String?>(null) }
-
-    // 4. 自訂地點列表
+    // 4. 自訂地點列表 - 移到狀態變數前面
     val customPoints = remember {
         listOf(
             CustomPoint(
                 LatLng(22.738542718675728, 121.06613647723158),
                 "理工學院",
-                "理工學院位於校園北側，內有多間實驗室與教室。"
+                "理工學院位於校園北側，內有多間實驗室與教室。點擊導航可進入室內地圖。",
+                hasIndoorMap = true
             ),
             CustomPoint(
                 LatLng(22.738700601981595, 121.06497484121572),
@@ -124,7 +136,7 @@ fun MapScreen() {
             CustomPoint(
                 LatLng(22.73567797363531, 121.06765063326057),
                 "圖書館",
-                "圖書館擁有豐富藏書與安靜閱讀區，也被稱為全球八度獨特圖書館之一。"
+                "圖書館擁有豐富藏書與安靜閱讀区，也被稱為全球八度獨特圖書館之一。"
             ),
             CustomPoint(
                 LatLng(22.73599707595406, 121.06669594919275),
@@ -164,7 +176,241 @@ fun MapScreen() {
         )
     }
 
-    // 5. 申請定位權限
+    // 3. 所有狀態變數聲明
+    var permissionGranted by remember { mutableStateOf(false) }
+    var currentLoc by remember { mutableStateOf<LatLng?>(null) }
+    var lastRerouteLoc by remember { mutableStateOf<LatLng?>(null) }
+    var destination by remember { mutableStateOf<LatLng?>(null) }
+    var routePoints by remember { mutableStateOf<List<LatLng>>(emptyList()) }
+    var isRouting by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+    var selectedPoint by remember { mutableStateOf<CustomPoint?>(null) }
+    var travelTimeText by remember { mutableStateOf<String?>(null) }
+    
+    // 搜尋相關狀態
+    var isSearchExpanded by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var searchSuggestions by remember { mutableStateOf<List<CustomPoint>>(emptyList()) }
+    var showSearchSuggestions by remember { mutableStateOf(false) }
+
+    // 起點搜尋相關狀態
+    var startQuery by remember { mutableStateOf("") }
+    var startSuggestions by remember { mutableStateOf<List<CustomPoint>>(emptyList()) }
+    var showStartSuggestions by remember { mutableStateOf(false) }
+    var customStartPoint by remember { mutableStateOf<LatLng?>(null) }
+    var isUsingCurrentLocation by remember { mutableStateOf(true) }
+
+    // 室內導航相關狀態
+    var isNavigatingToEngineeringCollege by remember { mutableStateOf(false) }
+    var showIndoorMapDialog by remember { mutableStateOf(false) }
+    var indoorDestination by remember { mutableStateOf("") }
+
+    // Snackbar狀態
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // 5. 所有函數定義
+    // 新增：檢查目的地是否支援室內導航
+    fun isDestinationSupportIndoor(destinationPoint: LatLng?, searchQueryText: String): Boolean {
+        if (destinationPoint == null) return false
+        
+        val engineeringCollege = customPoints.firstOrNull { point -> point.name == "理工學院" }
+        val isEngineeringCollege = engineeringCollege?.location == destinationPoint
+        val isSeClassroom = searchQueryText.lowercase().startsWith("sec") || 
+                           searchQueryText.lowercase().startsWith("se")
+        
+        return isEngineeringCollege || isSeClassroom
+    }
+
+    // 獲取實際起點位置
+    fun getActualStartPoint(): LatLng? {
+        return if (isUsingCurrentLocation) currentLoc else customStartPoint
+    }
+
+    // 更新搜尋建議
+    fun updateSearchSuggestions(query: String) {
+        if (query.length >= 1) {
+            searchSuggestions = customPoints
+                .filter { point -> point.name.contains(query, ignoreCase = true) }
+                .take(5)
+            showSearchSuggestions = searchSuggestions.isNotEmpty()
+        } else {
+            showSearchSuggestions = false
+        }
+    }
+
+    // 更新起點搜尋建議
+    fun updateStartSuggestions(query: String) {
+        if (query.length >= 1) {
+            startSuggestions = customPoints
+                .filter { point -> point.name.contains(query, ignoreCase = true) }
+                .take(5)
+            showStartSuggestions = startSuggestions.isNotEmpty()
+        } else {
+            showStartSuggestions = false
+        }
+    }
+
+    // 處理起點搜尋
+    fun handleStartSearch() {
+        val point = customPoints.firstOrNull { customPoint -> 
+            customPoint.name.contains(startQuery, ignoreCase = true)
+        }
+        
+        if (point != null) {
+            customStartPoint = point.location
+            isUsingCurrentLocation = false
+            showStartSuggestions = false
+            
+            scope.launch {
+                snackbarHostState.showSnackbar("起點設定為：${point.name}")
+            }
+        } else if (startQuery.lowercase() == "我的位置" || startQuery.lowercase() == "當前位置") {
+            customStartPoint = null
+            isUsingCurrentLocation = true
+            showStartSuggestions = false
+            
+            scope.launch {
+                snackbarHostState.showSnackbar("起點設定為：當前位置")
+            }
+        } else {
+            scope.launch {
+                snackbarHostState.showSnackbar("未找到起點：$startQuery")
+            }
+        }
+        focusManager.clearFocus()
+    }
+
+    // 重置起點為當前位置
+    fun resetToCurrentLocation() {
+        startQuery = ""
+        customStartPoint = null
+        isUsingCurrentLocation = true
+        showStartSuggestions = false
+        
+        scope.launch {
+            snackbarHostState.showSnackbar("起點重置為當前位置")
+        }
+    }
+
+    // 檢查是否到達理工學院
+    fun checkArrivalAtEngineeringCollege() {
+        if (isNavigatingToEngineeringCollege && currentLoc != null) {
+            val engineeringCollege = customPoints.first { point -> point.name == "理工學院" }
+            val distanceToDestination = distanceBetween(currentLoc!!, engineeringCollege.location)
+            
+            // 當距離小於50公尺時，顯示室內地圖選項
+            if (distanceToDestination < 50f) {
+                showIndoorMapDialog = true
+                isNavigatingToEngineeringCollege = false
+            }
+        }
+    }
+
+    // 修正：處理目的地搜尋
+    fun handleSearch() {
+        val point = customPoints.firstOrNull { customPoint -> 
+            customPoint.name.contains(searchQuery, ignoreCase = true)
+        }
+        
+        val isSeClassroom = searchQuery.lowercase().startsWith("sec") || 
+                           searchQuery.lowercase().startsWith("se")
+        
+        if (point != null) {
+            destination = point.location
+            
+            if (point.name == "理工學院" || isSeClassroom) {
+                isNavigatingToEngineeringCollege = true
+                if (isSeClassroom) {
+                    indoorDestination = searchQuery
+                }
+            }
+            
+            scope.launch {
+                cameraState.move(CameraUpdateFactory.newLatLngZoom(point.location, 17f))
+            }
+            
+            // 計算路線
+            val startPoint = getActualStartPoint()
+            android.util.Log.d("MapScreen", "起點: $startPoint, 終點: ${point.location}")
+            
+            drawRoute(
+                origin = startPoint,
+                dest = point.location,
+                onStart = { 
+                    isRouting = true
+                    android.util.Log.d("MapScreen", "開始計算路線")
+                },
+                onSuccess = { points ->
+                    isRouting = false
+                    routePoints = points
+                    android.util.Log.d("MapScreen", "路線計算成功，點數: ${points.size}")
+                },
+                onTime = { timeText ->
+                    travelTimeText = timeText
+                    android.util.Log.d("MapScreen", "預計時間: $timeText")
+                },
+                onError = { errorMessage ->
+                    isRouting = false
+                    errorMsg = errorMessage
+                    android.util.Log.e("MapScreen", "路線計算失敗: $errorMessage")
+                    scope.launch {
+                        delay(3000)
+                        errorMsg = null
+                    }
+                }
+            )
+            
+            showSearchSuggestions = false
+            scope.launch {
+                snackbarHostState.showSnackbar("已設定路線前往：${point.name}")
+            }
+        } else if (isSeClassroom) {
+            // 如果是se系列教室但沒找到對應建築物，直接導航到理工學院
+            val engineeringCollege = customPoints.first { customPoint -> customPoint.name == "理工學院" }
+            destination = engineeringCollege.location
+            isNavigatingToEngineeringCollege = true
+            indoorDestination = searchQuery
+            
+            // 移動地圖到理工學院位置
+            scope.launch {
+                cameraState.move(CameraUpdateFactory.newLatLngZoom(engineeringCollege.location, 17f))
+            }
+            
+            // 計算到理工學院的路線
+            drawRoute(
+                origin = getActualStartPoint(),
+                dest = engineeringCollege.location,
+                onStart = { isRouting = true },
+                onSuccess = { points ->
+                    isRouting = false
+                    routePoints = points
+                },
+                onTime = { timeText ->
+                    travelTimeText = timeText
+                },
+                onError = {
+                    isRouting = false
+                    errorMsg = it
+                    scope.launch {
+                        delay(3000)
+                        errorMsg = null
+                    }
+                }
+            )
+            
+            showSearchSuggestions = false
+            scope.launch {
+                snackbarHostState.showSnackbar("已設定路線前往理工學院 (室內: $searchQuery)")
+            }
+        } else {
+            scope.launch {
+                snackbarHostState.showSnackbar("未找到地點：$searchQuery")
+            }
+        }
+        focusManager.clearFocus()
+    }
+
+    // 6. 申請定位權限
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> permissionGranted = granted }
@@ -181,7 +427,7 @@ fun MapScreen() {
         }
     }
 
-    // 6. 設定持續定位，但不自動移動鏡頭
+    // 7. 設定持續定位
     val locationRequest = remember {
         LocationRequest.create().apply {
             interval = 5000
@@ -189,6 +435,7 @@ fun MapScreen() {
             priority = Priority.PRIORITY_HIGH_ACCURACY
         }
     }
+
     val locationCallback = remember {
         object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
@@ -197,37 +444,39 @@ fun MapScreen() {
                     val newLatLng = LatLng(loc.latitude, loc.longitude)
                     currentLoc = newLatLng
 
-                    // 只有使用者移動超過 20 公尺時才重新路線
-                    destination?.let { dest ->
-                        val prev = lastRerouteLoc
-                        if (prev == null || distanceBetween(prev, newLatLng) > 20f) {
-                            lastRerouteLoc = newLatLng
-                            drawRoute(
-                                origin = newLatLng,
-                                dest = dest,
-                                onStart = { isRouting = true },
-                                onSuccess = { points ->
-                                    isRouting = false
-                                    routePoints = points
-                                },
-                                onTime = { timeText ->
-                                    travelTimeText = timeText
-                                },
-                                onError = {
-                                    isRouting = false
-                                    errorMsg = it
-                                    scope.launch {
-                                        delay(3000)
-                                        errorMsg = null
+                    if (isUsingCurrentLocation) {
+                        destination?.let { dest ->
+                            val prev = lastRerouteLoc
+                            if (prev == null || distanceBetween(prev, newLatLng) > 20f) {
+                                lastRerouteLoc = newLatLng
+                                drawRoute(
+                                    origin = newLatLng,
+                                    dest = dest,
+                                    onStart = { isRouting = true },
+                                    onSuccess = { points ->
+                                        isRouting = false
+                                        routePoints = points
+                                    },
+                                    onTime = { timeText ->
+                                        travelTimeText = timeText
+                                    },
+                                    onError = {
+                                        isRouting = false
+                                        errorMsg = it
+                                        scope.launch {
+                                            delay(3000)
+                                            errorMsg = null
+                                        }
                                     }
-                                }
-                            )
+                                )
+                            }
                         }
                     }
                 }
             }
         }
     }
+
     LaunchedEffect(permissionGranted) {
         if (permissionGranted) {
             fusedClient.requestLocationUpdates(
@@ -237,11 +486,12 @@ fun MapScreen() {
             )
         }
     }
+
     DisposableEffect(Unit) {
         onDispose { fusedClient.removeLocationUpdates(locationCallback) }
     }
 
-    // 7. 初次定位
+    // 8. 初次定位
     LaunchedEffect(permissionGranted) {
         if (permissionGranted) {
             fusedClient.lastLocation
@@ -249,7 +499,9 @@ fun MapScreen() {
                     if (loc != null) {
                         val ll = LatLng(loc.latitude, loc.longitude)
                         currentLoc = ll
-                        cameraState.move(CameraUpdateFactory.newLatLng(ll))
+                        scope.launch {
+                            cameraState.move(CameraUpdateFactory.newLatLng(ll))
+                        }
                     } else {
                         errorMsg = "無法取得目前位置"
                         scope.launch {
@@ -268,32 +520,45 @@ fun MapScreen() {
         }
     }
 
-    // 8. Map 畫面
+    // 9. 監控位置變化以檢查是否到達理工學院
+    LaunchedEffect(currentLoc) {
+        if (currentLoc != null) {
+            checkArrivalAtEngineeringCollege()
+        }
+    }
+
+    // 10. Map 畫面
     Box(modifier = Modifier.fillMaxSize()) {
+        
         GoogleMap(
             modifier = Modifier.matchParentSize(),
             cameraPositionState = cameraState,
             properties = MapProperties(isMyLocationEnabled = permissionGranted),
             onMapClick = { latLng ->
-                // 使用者在空白處點擊：設定新的目的地，重置計數並立即計算
                 destination = latLng
                 routePoints = emptyList()
-                lastRerouteLoc = currentLoc  // 確保下次會重新繪一條
+                lastRerouteLoc = getActualStartPoint()
                 travelTimeText = null
+                
+                val startPoint = getActualStartPoint()
+                android.util.Log.d("MapScreen", "地圖點擊 - 起點: $startPoint, 終點: $latLng")
+                
                 drawRoute(
-                    origin = currentLoc,
+                    origin = startPoint,
                     dest = latLng,
                     onStart = { isRouting = true },
                     onSuccess = { points ->
                         isRouting = false
                         routePoints = points
+                        android.util.Log.d("MapScreen", "點擊路線成功，點數: ${points.size}")
                     },
                     onTime = { timeText ->
                         travelTimeText = timeText
                     },
-                    onError = {
+                    onError = { errorMessage ->
                         isRouting = false
-                        errorMsg = it
+                        errorMsg = errorMessage
+                        android.util.Log.e("MapScreen", "點擊路線失敗: $errorMessage")
                         scope.launch {
                             delay(3000)
                             errorMsg = null
@@ -302,21 +567,36 @@ fun MapScreen() {
                 )
             }
         ) {
-            // A. 顯示「你的位置」Marker
-            currentLoc?.let {
+            // A. 顯示「當前位置」Marker
+            currentLoc?.let { currentLocation ->
                 Marker(
-                    state = MarkerState(it),
-                    title = "你的位置",
-                    icon = getResizedBitmapDescriptor(context, R.drawable.marker, 120, 120)
+                    state = MarkerState(currentLocation),
+                    title = "當前位置",
+                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE)
                 )
             }
 
-            // B. 顯示「目的地」Marker，點擊直接清除
+            // B. 显示「自定义起点」Marker
+            if (!isUsingCurrentLocation) {
+                customStartPoint?.let { startLocation ->
+                    Marker(
+                        state = MarkerState(startLocation),
+                        title = "起點",
+                        icon = BitmapDescriptorFactory.fromBitmap(createGrayDotBitmap(context)),
+                        onClick = {
+                            resetToCurrentLocation()
+                            true
+                        }
+                    )
+                }
+            }
+
+            // C. 顯示「目的地」Marker
             destination?.let { destLatLng ->
                 Marker(
                     state = MarkerState(destLatLng),
                     title = "目的地",
-                    icon = getResizedBitmapDescriptor(context, R.drawable.marker, 120, 120),
+                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED),
                     onClick = {
                         destination = null
                         routePoints = emptyList()
@@ -326,12 +606,12 @@ fun MapScreen() {
                 )
             }
 
-            // C. 顯示自訂地點 Marker
+            // D. 顯示自定義地點 Marker
             customPoints.forEach { custom ->
                 Marker(
                     state = MarkerState(custom.location),
                     title = custom.name,
-                    icon = getResizedBitmapDescriptor(context, R.drawable.marker, 80, 80),
+                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_CYAN),
                     onClick = {
                         selectedPoint = custom
                         false
@@ -339,18 +619,19 @@ fun MapScreen() {
                 )
             }
 
-            // D. 畫三段 Polyline：灰色虛線 + 藍色實線 + 灰色虛線
-            // D1. 起點（currentLoc）→ 路線第一點（灰色虛線）
-            if (currentLoc != null && routePoints.isNotEmpty()) {
+            // E. 繪製路線
+            val actualStartPoint = getActualStartPoint()
+            
+            if (actualStartPoint != null && routePoints.isNotEmpty()) {
                 val firstOnRoad = routePoints.first()
                 Polyline(
-                    points = listOf(currentLoc!!, firstOnRoad),
+                    points = listOf(actualStartPoint, firstOnRoad),
                     width = 6f,
                     color = Color.Gray,
                     pattern = dashPattern
                 )
             }
-            // D2. 路線主段（藍色實線）
+            
             if (routePoints.isNotEmpty()) {
                 Polyline(
                     points = routePoints,
@@ -358,7 +639,7 @@ fun MapScreen() {
                     color = Color.Blue
                 )
             }
-            // D3. 路線最後一點→目的地（灰色虛線）
+            
             if (routePoints.isNotEmpty() && destination != null) {
                 val lastOnRoad = routePoints.last()
                 Polyline(
@@ -367,6 +648,363 @@ fun MapScreen() {
                     color = Color.Gray,
                     pattern = dashPattern
                 )
+            }
+        }
+
+        // 搜尋卡片
+        AnimatedVisibility(
+            visible = true,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 16.dp, end = 80.dp, top = 16.dp)
+                .zIndex(1f)
+        ) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth(0.85f)
+                    .background(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(12.dp)
+                    ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(8.dp)
+                ) {
+                    // 展開/收起按鈕
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isSearchExpanded = !isSearchExpanded },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "路線規劃",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        )
+                        Icon(
+                            imageVector = if (isSearchExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = if (isSearchExpanded) "收起" else "展開",
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // 展開的搜索內容
+                    AnimatedVisibility(
+                        visible = isSearchExpanded,
+                        enter = expandVertically() + fadeIn(),
+                        exit = shrinkVertically() + fadeOut()
+                    ) {
+                        Column(modifier = Modifier.padding(6.dp)) {
+                            // 起點搜尋框
+                            OutlinedTextField(
+                                value = startQuery,
+                                onValueChange = { 
+                                    startQuery = it
+                                    updateStartSuggestions(it)
+                                    showSearchSuggestions = false
+                                },
+                                label = { Text("起點", style = MaterialTheme.typography.bodySmall) },
+                                placeholder = { 
+                                    Text(
+                                        if (isUsingCurrentLocation) "當前位置" else "例如: 圖書館",
+                                        style = MaterialTheme.typography.bodySmall
+                                    ) 
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                leadingIcon = { 
+                                    Icon(
+                                        imageVector = Icons.Default.LocationOn, 
+                                        contentDescription = null,
+                                        tint = Color.Green,
+                                        modifier = Modifier.size(18.dp)
+                                    ) 
+                                },
+                                trailingIcon = {
+                                    Row {
+                                        if (startQuery.isNotEmpty()) {
+                                            IconButton(
+                                                onClick = { 
+                                                    startQuery = ""
+                                                    showStartSuggestions = false
+                                                },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Clear,
+                                                    contentDescription = "清除",
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                        if (!isUsingCurrentLocation) {
+                                            IconButton(
+                                                onClick = { resetToCurrentLocation() },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.LocationOn,
+                                                    contentDescription = "使用當前位置",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                },
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodySmall,
+                                keyboardOptions = KeyboardOptions.Default.copy(
+                                    imeAction = ImeAction.Search
+                                ),
+                                keyboardActions = KeyboardActions(
+                                    onSearch = { handleStartSearch() }
+                                )
+                            )
+
+                            // 起點搜尋按鈕
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Button(
+                                onClick = { handleStartSearch() },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(32.dp),
+                                enabled = startQuery.isNotEmpty()
+                            ) {
+                                Text("設定起點", style = MaterialTheme.typography.bodySmall)
+                            }
+
+                            // 起點搜尋建議
+                            AnimatedVisibility(visible = showStartSuggestions) {
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 2.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                    )
+                                ) {
+                                    LazyColumn(
+                                        modifier = Modifier.heightIn(min = 0.dp, max = 120.dp)
+                                    ) {
+                                        items(startSuggestions) { point ->
+                                            Text(
+                                                text = point.name,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        startQuery = point.name
+                                                        showStartSuggestions = false
+                                                        focusManager.clearFocus()
+                                                        handleStartSearch()
+                                                    }
+                                                    .padding(8.dp),
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // 目的地搜尋框
+                            OutlinedTextField(
+                                value = searchQuery,
+                                onValueChange = { 
+                                    searchQuery = it
+                                    updateSearchSuggestions(it)
+                                    showStartSuggestions = false
+                                },
+                                label = { Text("目的地", style = MaterialTheme.typography.bodySmall) },
+                                placeholder = { Text("例如: 圖書館、sec101", style = MaterialTheme.typography.bodySmall) },
+                                modifier = Modifier.fillMaxWidth(),
+                                leadingIcon = { 
+                                    Icon(
+                                        imageVector = Icons.Default.LocationOn, 
+                                        contentDescription = null,
+                                        tint = Color.Red,
+                                        modifier = Modifier.size(18.dp)
+                                    ) 
+                                },
+                                trailingIcon = {
+                                    if (searchQuery.isNotEmpty()) {
+                                        IconButton(
+                                            onClick = { 
+                                                searchQuery = ""
+                                                showSearchSuggestions = false
+                                            },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Clear,
+                                                contentDescription = "清除",
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                },
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodySmall,
+                                keyboardOptions = KeyboardOptions.Default.copy(
+                                    imeAction = ImeAction.Search
+                                ),
+                                keyboardActions = KeyboardActions(
+                                    onSearch = { handleSearch() }
+                                )
+                            )
+                            
+                            Spacer(modifier = Modifier.height(4.dp))
+                            
+                            Button(
+                                onClick = { handleSearch() },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(32.dp),
+                                enabled = searchQuery.isNotEmpty()
+                            ) {
+                                Text("搜尋路線", style = MaterialTheme.typography.bodySmall)
+                            }
+
+                            // 室內路線按鈕
+                            if (destination != null && routePoints.isNotEmpty() && 
+                                isDestinationSupportIndoor(destination, searchQuery)) {
+                                
+                                Spacer(modifier = Modifier.height(4.dp))
+                                
+                                Button(
+                                    onClick = {
+                                        val finalDestination = if (searchQuery.lowercase().startsWith("sec") || 
+                                                                 searchQuery.lowercase().startsWith("se")) {
+                                            searchQuery
+                                        } else {
+                                            ""
+                                        }
+                                        
+                                        navController?.navigate(
+                                            if (finalDestination.isNotEmpty()) {
+                                                "indoormap/$finalDestination"
+                                            } else {
+                                                "indoormap"
+                                            }
+                                        )
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(32.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.secondary
+                                    )
+                                ) {
+                                    Text("看室內路線", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+
+                            // 目的地搜尋建議
+                            AnimatedVisibility(visible = showSearchSuggestions) {
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 2.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                    )
+                                ) {
+                                    LazyColumn(
+                                        modifier = Modifier.heightIn(min = 0.dp, max = 120.dp)
+                                    ) {
+                                        items(searchSuggestions) { point ->
+                                            Text(
+                                                text = point.name,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        searchQuery = point.name
+                                                        showSearchSuggestions = false
+                                                        focusManager.clearFocus()
+                                                        handleSearch()
+                                                    }
+                                                    .padding(8.dp),
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 顯示當前設定
+                            if (!isUsingCurrentLocation || destination != null) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    if (!isUsingCurrentLocation) {
+                                        Surface(
+                                            color = Color.Green.copy(alpha = 0.1f),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "起點: ${customPoints.firstOrNull { point -> point.location == customStartPoint }?.name ?: "自訂位置"}",
+                                                modifier = Modifier.padding(4.dp),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color.Green
+                                            )
+                                        }
+                                    } else {
+                                        Surface(
+                                            color = Color.Blue.copy(alpha = 0.1f),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "起點: 當前位置",
+                                                modifier = Modifier.padding(4.dp),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color.Blue
+                                            )
+                                        }
+                                    }
+                                    
+                                    destination?.let { destinationPoint ->
+                                        Surface(
+                                            color = Color.Red.copy(alpha = 0.1f),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "目的地: ${customPoints.firstOrNull { point -> point.location == destinationPoint }?.name ?: "地圖位置"}",
+                                                modifier = Modifier.padding(4.dp),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color.Red
+                                            )
+                                        }
+                                    }
+                                    
+                                    // 室內導航提示
+                                    if (destination != null && isDestinationSupportIndoor(destination, searchQuery)) {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.1f),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = if (searchQuery.lowercase().startsWith("sec") || searchQuery.lowercase().startsWith("se")) {
+                                                    "室內目標: $searchQuery"
+                                                } else {
+                                                    "支援室內導航"
+                                                },
+                                                modifier = Modifier.padding(4.dp),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.secondary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -443,13 +1081,12 @@ fun MapScreen() {
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        // 按下「導航」才設定目的地並畫路線
                         destination = point.location
                         routePoints = emptyList()
-                        lastRerouteLoc = currentLoc
+                        lastRerouteLoc = getActualStartPoint()
                         travelTimeText = null
                         drawRoute(
-                            origin = currentLoc,
+                            origin = getActualStartPoint(),
                             dest = point.location,
                             onStart = { isRouting = true },
                             onSuccess = { points ->
@@ -475,26 +1112,61 @@ fun MapScreen() {
                 }
             )
         }
+
+        // 室內地圖對話框
+        if (showIndoorMapDialog) {
+            AlertDialog(
+                onDismissRequest = { showIndoorMapDialog = false },
+                title = { Text("已到達理工學院") },
+                text = { 
+                    Text(
+                        if (indoorDestination.isNotEmpty()) {
+                            "您已到達理工學院，是否要進入室內地圖導航到 $indoorDestination？"
+                        } else {
+                            "您已到達理工學院，是否要查看室內地圖？"
+                        }
+                    ) 
+                },
+                dismissButton = {
+                    TextButton(onClick = { 
+                        showIndoorMapDialog = false
+                        indoorDestination = ""
+                    }) {
+                        Text("取消")
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showIndoorMapDialog = false
+                        navController?.navigate(
+                            if (indoorDestination.isNotEmpty()) {
+                                "indoormap/$indoorDestination"
+                            } else {
+                                "indoormap"
+                            }
+                        )
+                    }) {
+                        Text("進入室內地圖")
+                    }
+                }
+            )
+        }
+
+        // 顯示 Snackbar
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 76.dp)
+        )
     }
 }
 
 // Utility：計算兩點距離（單位：公尺）
 fun distanceBetween(a: LatLng, b: LatLng): Float {
     val result = FloatArray(1)
-    Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, result)
+    android.location.Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, result)
     return result[0]
-}
-
-// Utility：縮放 Bitmap 並回傳給 Marker 用
-fun getResizedBitmapDescriptor(
-    context: Context,
-    resId: Int,
-    width: Int,
-    height: Int
-): com.google.android.gms.maps.model.BitmapDescriptor {
-    val imageBitmap = BitmapFactory.decodeResource(context.resources, resId)
-    val scaledBitmap = android.graphics.Bitmap.createScaledBitmap(imageBitmap, width, height, false)
-    return com.google.android.gms.maps.model.BitmapDescriptorFactory.fromBitmap(scaledBitmap)
 }
 
 /**
@@ -509,39 +1181,94 @@ fun drawRoute(
     onError: (String) -> Unit
 ) {
     if (origin == null) {
-        onError("尚未取得目前位置")
+        android.util.Log.e("MapScreen", "起點為空")
+        onError("尚未取得起點位置")
         return
     }
+    
+    // 檢查起點和終點是否太近
+    val distance = android.location.Location("start").apply {
+        latitude = origin.latitude
+        longitude = origin.longitude
+    }.distanceTo(android.location.Location("end").apply {
+        latitude = dest.latitude
+        longitude = dest.longitude
+    })
+    
+    android.util.Log.d("MapScreen", "起點終點距離: ${distance}公尺")
+    
+    // 如果距離太近（小於10公尺），直接繪製直線
+    if (distance < 10f) {
+        android.util.Log.d("MapScreen", "距離太近，繪製直線路徑")
+        onSuccess(listOf(origin, dest))
+        onTime("1分鐘")
+        return
+    }
+    
+    android.util.Log.d("MapScreen", "開始請求路線: ${origin.latitude},${origin.longitude} -> ${dest.latitude},${dest.longitude}")
     onStart()
+    
     val o = "${origin.latitude},${origin.longitude}"
     val d = "${dest.latitude},${dest.longitude}"
-    RetrofitInstance.api.getDirections(
-        origin = o,
-        destination = d,
-        mode = "walking",
-        apiKey = "AIzaSyDbCPl8a9m7dGMgTqF2GFL_cPSRjV_hiOQ"
-    )
-        .enqueue(object : Callback<com.example.project250311.Map.model.DirectionsResponse> {
+    
+    try {
+        RetrofitInstance.api.getDirections(
+            origin = o,
+            destination = d,
+            mode = "walking",
+            apiKey = "AIzaSyDbCPl8a9m7dGMgTqF2GFL_cPSRjV_hiOQ"
+        ).enqueue(object : Callback<com.example.project250311.Map.model.DirectionsResponse> {
             override fun onResponse(
                 call: Call<com.example.project250311.Map.model.DirectionsResponse>,
                 response: Response<com.example.project250311.Map.model.DirectionsResponse>
             ) {
+                android.util.Log.d("MapScreen", "API 回應碼: ${response.code()}")
+                
                 if (response.isSuccessful) {
                     val body = response.body()
+                    android.util.Log.d("MapScreen", "回應內容: $body")
+                    
                     val route = body?.routes?.firstOrNull()
-                    val leg = route?.legs?.firstOrNull()
-                    val points = route?.overview_polyline?.points
+                    
+                    if (route == null) {
+                        android.util.Log.w("MapScreen", "API 未回傳路線，可能是距離太近或無法步行到達，使用直線路徑")
+                        // 使用直線路徑作為備選方案
+                        onSuccess(listOf(origin, dest))
+                        onTime("約${(distance / 80).toInt() + 1}分鐘") // 假設步行速度80公尺/分鐘
+                        return
+                    }
+                    
+                    val leg = route.legs?.firstOrNull()
+                    val points = route.overview_polyline?.points
 
                     val durationText = leg?.duration?.text ?: "未知時間"
                     onTime(durationText)
 
                     if (!points.isNullOrEmpty()) {
-                        onSuccess(PolylineUtils.decodePolyline(points))
+                        val decodedPoints = PolylineUtils.decodePolyline(points)
+                        android.util.Log.d("MapScreen", "解碼後路徑點數: ${decodedPoints.size}")
+                        onSuccess(decodedPoints)
                     } else {
-                        onError("找不到路線")
+                        android.util.Log.w("MapScreen", "路線數據為空，使用直線路徑")
+                        onSuccess(listOf(origin, dest))
+                        onTime(durationText)
                     }
                 } else {
-                    onError("API 回傳 ${response.code()}")
+                    android.util.Log.e("MapScreen", "API 錯誤: ${response.code()}, ${response.message()}")
+                    
+                    // API 失敗時使用直線路徑作為備選方案
+                    android.util.Log.w("MapScreen", "API 失敗，使用直線路徑作為備選方案")
+                    onSuccess(listOf(origin, dest))
+                    onTime("約${(distance / 80).toInt() + 1}分鐘")
+                    
+                    // 仍然顯示錯誤信息
+                    when (response.code()) {
+                        400 -> onError("請求參數錯誤（已使用直線路徑）")
+                        401 -> onError("API 金鑰無效（已使用直線路徑）")
+                        403 -> onError("API 權限不足（已使用直線路徑）")
+                        429 -> onError("API 請求超限（已使用直線路徑）")
+                        else -> onError("API 錯誤 ${response.code()}（已使用直線路徑）")
+                    }
                 }
             }
 
@@ -549,7 +1276,45 @@ fun drawRoute(
                 call: Call<com.example.project250311.Map.model.DirectionsResponse>,
                 t: Throwable
             ) {
-                onError("網路錯誤：${t.localizedMessage}")
+                android.util.Log.e("MapScreen", "網路請求失敗，使用直線路徑", t)
+                // 網路失敗時使用直線路徑
+                onSuccess(listOf(origin, dest))
+                onTime("約${(distance / 80).toInt() + 1}分鐘")
+                onError("網路錯誤（已使用直線路徑）：${t.localizedMessage}")
             }
         })
+    } catch (e: Exception) {
+        android.util.Log.e("MapScreen", "請求異常，使用直線路徑", e)
+        onSuccess(listOf(origin, dest))
+        onTime("約${(distance / 80).toInt() + 1}分鐘")
+        onError("請求異常（已使用直線路徑）：${e.localizedMessage}")
+    }
+}
+
+// 創建灰色圓點圖標
+fun createGrayDotBitmap(context: Context): Bitmap {
+    val width = 24
+    val height = 24
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    
+    val paint = Paint().apply {
+        isAntiAlias = true
+        style = Paint.Style.FILL
+        color = android.graphics.Color.DKGRAY
+    }
+    
+    // 繪製圓點
+    canvas.drawCircle(width / 2f, height / 2f, width / 2f - 2, paint)
+    
+    // 添加白色邊框
+    val borderPaint = Paint().apply {
+        isAntiAlias = true
+        style = Paint.Style.STROKE
+        strokeWidth = 2f
+        color = android.graphics.Color.WHITE
+    }
+    canvas.drawCircle(width / 2f, height / 2f, width / 2f - 2, borderPaint)
+    
+    return bitmap
 }
