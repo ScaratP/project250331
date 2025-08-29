@@ -324,12 +324,26 @@ fun AppNavHost(
     ) {
         // 地圖畫面
         composable("map") {
-            MapScreen()
+            MapScreen(navController)  // 傳遞 navController
         }
 
-        // 室內地圖畫面
+        // 室內地圖畫面（不帶參數）
         composable("indoormap") {
             IndoorMapScreen()
+        }
+        
+        // 室內地圖畫面（帶目的地參數）
+        composable(
+            route = "indoormap/{destination}",
+            arguments = listOf(navArgument("destination") {
+                type = NavType.StringType
+                defaultValue = ""
+            })
+        ) { backStackEntry ->
+            val destination = backStackEntry.arguments?.getString("destination") ?: ""
+            IndoorMapScreen(
+                initialDestination = if (destination.isNotEmpty()) destination else null
+            )
         }
 
         // 課表畫面

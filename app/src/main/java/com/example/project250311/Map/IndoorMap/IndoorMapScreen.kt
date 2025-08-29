@@ -317,7 +317,9 @@ fun findPath(points: List<ReferencePoint>, start: ReferencePoint, end: Reference
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun IndoorMapScreen() {
+fun IndoorMapScreen(
+    initialDestination: String? = null  // 新增參數：初始目的地
+) {
     val context = LocalContext.current
     var imageSize by remember { mutableStateOf(IntSize.Zero) }
     val touchImageViewRef = remember { mutableStateOf<TouchImageView?>(null) }
@@ -348,7 +350,18 @@ fun IndoorMapScreen() {
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
 
-    // 讀取參考點數據
+    // 新增：預設起點 (理工學院入口)
+    val defaultStartPoint = remember {
+        ReferencePoint.createSimplePoint(
+            name = "理工學院入口",
+            x = 36.21,  // x=36.21%
+            y = 68.26,  // y=68.26%
+            imageId = R.drawable.se1,
+            scanCount = 0
+        )
+    }
+
+    // 修改：初始化時設定預設起點並處理初始目的地
     LaunchedEffect(Unit) {
         try {
             val inputStream = context.resources.openRawResource(R.raw.classroom_points)
@@ -357,13 +370,63 @@ fun IndoorMapScreen() {
             
             val gson = Gson()
             val listType = object : TypeToken<List<ReferencePoint>>() {}.type
-            allReferencePoints = gson.fromJson(jsonString, listType)
+            val loadedPoints = gson.fromJson<List<ReferencePoint>>(jsonString, listType)
+            
+            // 添加預設起點到參考點列表
+            allReferencePoints = listOf(defaultStartPoint) + loadedPoints
+            
+            // 自動設定起點
+            startPoint = defaultStartPoint
+            startQuery = defaultStartPoint.name
+            
+            // 如果有初始目的地，自動搜尋並設定
+            if (!initialDestination.isNullOrEmpty()) {
+                val destination = allReferencePoints.firstOrNull { point -> 
+                    point.name.contains(initialDestination, ignoreCase = true)
+                }
+                if (destination != null) {
+                    endPoint = destination
+                    destinationQuery = destination.name
+                    
+                    // 自動規劃路線
+                    navigationPath = findPath(allReferencePoints, startPoint!!, destination)
+                    
+                    // 更新視圖
+                    customImageViewRef.value?.let { view ->
+                        view.startPoint = startPoint
+                        view.endPoint = endPoint
+                        view.navigationPath = navigationPath
+                        view.invalidate()
+                    }
+                    
+                    // 展開搜尋區域以顯示結果
+                    isSearchExpanded = true
+                    
+                    scope.launch {
+                        snackbarHostState.showSnackbar("已自動規劃從入口到 ${destination.name} 的路線")
+                    }
+                } else {
+                    // 目的地未找到，但仍設定起點
+                    destinationQuery = initialDestination
+                    isSearchExpanded = true
+                    
+                    scope.launch {
+                        snackbarHostState.showSnackbar("未找到 $initialDestination，請手動搜尋")
+                    }
+                }
+            }
             
             Log.d("IndoorMapScreen", "Loaded ${allReferencePoints.size} reference points from JSON")
         } catch (e: Exception) {
             Log.e("IndoorMapScreen", "Error loading reference points", e)
+            
+            // 錯誤時仍設定預設起點
+            allReferencePoints = listOf(defaultStartPoint)
+            startPoint = defaultStartPoint
+            startQuery = defaultStartPoint.name
+            
             scope.launch {
-                snackbarHostState.showSnackbar("載入教室數據失敗: ${e.localizedMessage}")
+                snackbarHostState.showSnackbar("載入教室數據失敗，但已設定入口為起點")
             }
         }
     }
@@ -372,7 +435,7 @@ fun IndoorMapScreen() {
     fun updateStartSearchSuggestions(query: String) {
         if (query.length >= 1) {
             searchSuggestions = allReferencePoints
-                .filter { it.name.contains(query, ignoreCase = true) }
+                .filter { point -> point.name.contains(query, ignoreCase = true) }
                 .take(5)
             showStartSuggestions = searchSuggestions.isNotEmpty()
         } else {
@@ -384,7 +447,7 @@ fun IndoorMapScreen() {
     fun updateDestinationSearchSuggestions(query: String) {
         if (query.length >= 1) {
             searchSuggestions = allReferencePoints
-                .filter { it.name.contains(query, ignoreCase = true) }
+                .filter { point -> point.name.contains(query, ignoreCase = true) }
                 .take(5)
             showDestinationSuggestions = searchSuggestions.isNotEmpty()
         } else {
@@ -394,8 +457,16 @@ fun IndoorMapScreen() {
 
     // 搜索起點
     fun searchStart() {
-        val start = allReferencePoints.firstOrNull { 
-            it.name.contains(startQuery, ignoreCase = true)
+        if (startQuery == defaultStartPoint.name) {
+            // 保持預設起點
+            scope.launch {
+                snackbarHostState.showSnackbar("已使用理工學院入口作為起點")
+            }
+            return
+        }
+        
+        val start = allReferencePoints.firstOrNull { point -> 
+            point.name.contains(startQuery, ignoreCase = true)
         }
         if (start != null) {
             startPoint = start
@@ -416,8 +487,8 @@ fun IndoorMapScreen() {
 
     // 搜索目的地
     fun searchDestination() {
-        val destination = allReferencePoints.firstOrNull { 
-            it.name.contains(destinationQuery, ignoreCase = true)
+        val destination = allReferencePoints.firstOrNull { point -> 
+            point.name.contains(destinationQuery, ignoreCase = true)
         }
         if (destination != null) {
             endPoint = destination
@@ -506,6 +577,35 @@ fun IndoorMapScreen() {
                 .padding(paddingValues)
                 .fillMaxSize()
         ) {
+            // 新增：顯示當前位置資訊
+            if (startPoint == defaultStartPoint) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.Green.copy(alpha = 0.1f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.LocationOn,
+                            contentDescription = null,
+                            tint = Color.Green
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "當前位置：理工學院入口 (1樓)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.Green
+                        )
+                    }
+                }
+            }
+
             // 可收起的搜索區域
             Card(
                 modifier = Modifier
@@ -879,7 +979,9 @@ fun IndoorMapScreen() {
                     },
                     update = { view ->
                         (view as? MyCustomImageView)?.let { mv ->
-                            mv.overlayPoints = allReferencePoints.filter { it.imageId == currentImageId }
+                            // 確保包含預設起點
+                            val currentMapPoints = allReferencePoints.filter { it.imageId == currentImageId }
+                            mv.overlayPoints = currentMapPoints
                             mv.currentImageId = currentImageId
                             mv.navigationPath = navigationPath
                             mv.startPoint = startPoint
