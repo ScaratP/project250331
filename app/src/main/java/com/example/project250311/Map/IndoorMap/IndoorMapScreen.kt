@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -51,6 +53,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -122,6 +125,8 @@ class MyCustomImageView(context: Context, attrs: AttributeSet? = null) : TouchIm
     var startPoint: ReferencePoint? = null
     var endPoint: ReferencePoint? = null
     var highlightedPointId: String? = null
+    // 新增：導航時是否隱藏一般點位（僅保留起終點）
+    var hideMarkersWhenNavigating: Boolean = false
 
     // 修正路徑繪製問題 - 移除多地圖支援的錯誤邏輯
     fun drawNavigationPath(canvas: Canvas, pathPoints: List<ReferencePoint>) {
@@ -225,6 +230,8 @@ class MyCustomImageView(context: Context, attrs: AttributeSet? = null) : TouchIm
 
     fun drawReferencePointsOnCanvas(canvas: Canvas, points: List<ReferencePoint>) {
         if (drawable == null) return
+        // 新增：導航時可選擇隱藏點位
+        if (hideMarkersWhenNavigating && navigationPath != null) return
 
         val bitmapWidth = drawable.intrinsicWidth.toFloat()
         val bitmapHeight = drawable.intrinsicHeight.toFloat()
@@ -290,6 +297,16 @@ fun calculateDistance(point1: ReferencePoint, point2: ReferencePoint): Double {
     )
 }
 
+// 新增：計算路線總距離（供自訂路線與對話框使用）
+fun calculateRouteDistance(points: List<ReferencePoint>): Double {
+    if (points.size < 2) return 0.0
+    var total = 0.0
+    for (i in 0 until points.size - 1) {
+        total += calculateDistance(points[i], points[i + 1])
+    }
+    return total
+}
+
 // 尋找最近的參考點
 fun findNearestPoint(points: List<ReferencePoint>, x: Double, y: Double, imageId: Int): ReferencePoint? {
     if (points.isEmpty()) return null
@@ -309,22 +326,48 @@ fun getPointColor(point: ReferencePoint): Color {
     )
 }
 
-// 簡化路徑規劃算法，移除多地圖支援
+// 名稱正規化：移除空白與破折號、轉大寫，便於跨來源一致比對
+private fun normalizeName(name: String?): String =
+    (name ?: "").replace(Regex("[\\s\\-]"), "").uppercase()
+
+// 端點是否相同：名稱相同或座標接近即可視為相同（避免不同來源的 id 或 imageId 差異）
+private fun isSameEndpoint(a: ReferencePoint?, b: ReferencePoint?, distanceThreshold: Double = 2.0): Boolean {
+    if (a == null || b == null) return false
+    val nameEqual = normalizeName(a.name) == normalizeName(b.name)
+    val close = calculateDistance(a, b) <= distanceThreshold
+    return nameEqual || close
+}
+
+// 與編輯器一致的 imageId 映射，避免 JSON/資源 ID 差異造成樓層不一致
+private fun mapImageId(imageId: Int): Int = when (imageId) {
+    R.drawable.se1, 2131165346, 2131165344 -> R.drawable.se1
+    R.drawable.se2, 2131165347, 2131165345 -> R.drawable.se2
+    R.drawable.se3, 2131165348 -> R.drawable.se3
+    R.drawable.sea4, 2131165342 -> R.drawable.sea4
+    R.drawable.sea5, 2131165343 -> R.drawable.sea5
+    else -> R.drawable.se1
+}
+
+// 備援：沒有自定義路線時，回傳直線（原本的 findPath 修正掉 context 問題）
 fun findPath(points: List<ReferencePoint>, start: ReferencePoint, end: ReferencePoint): NavigationPath {
-    // 簡單的直線路徑
     return NavigationPath(listOf(start, end), calculateDistance(start, end))
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IndoorMapScreen(
-    initialDestination: String? = null  // 新增參數：初始目的地
+    initialDestination: String? = null
 ) {
     val context = LocalContext.current
     var imageSize by remember { mutableStateOf(IntSize.Zero) }
     val touchImageViewRef = remember { mutableStateOf<TouchImageView?>(null) }
     val customImageViewRef = remember { mutableStateOf<MyCustomImageView?>(null) }
     
+    // 室內自定義路線狀態（補齊）
+    var availableCustomRoutes by remember { mutableStateOf<List<IndoorCustomRoute>>(emptyList()) }
+    var selectedCustomRoute by remember { mutableStateOf<IndoorCustomRoute?>(null) }
+    var showCustomRoutesDialog by remember { mutableStateOf(false) }
+
     // 新增狀態 - 移除 showDestinationInput，改為分別控制
     var isSearchExpanded by remember { mutableStateOf(false) }
     var searchSuggestions by remember { mutableStateOf<List<ReferencePoint>>(emptyList()) }
@@ -339,8 +382,8 @@ fun IndoorMapScreen(
     var navigationPath by remember { mutableStateOf<NavigationPath?>(null) }
     var highlightedPointId by remember { mutableStateOf<String?>(null) }
     
-    // 固定顯示第一張地圖 (se1.png)
-    val currentImageId = R.drawable.se1
+    // 固定顯示第一張地圖 (se1.png) -> 改為可觀察狀態，切樓層時可觸發重組
+    var currentImageId by remember { mutableStateOf(R.drawable.se1) }
     
     // 參考點列表
     var allReferencePoints by remember { mutableStateOf<List<ReferencePoint>>(emptyList()) }
@@ -361,73 +404,124 @@ fun IndoorMapScreen(
         )
     }
 
-    // 修改：初始化時設定預設起點並處理初始目的地
+    // 修改：初始化時設定預設起點並處理初始目的地，同步載入自定義路線與修正 imageId
     LaunchedEffect(Unit) {
         try {
             val inputStream = context.resources.openRawResource(R.raw.classroom_points)
             val reader = BufferedReader(InputStreamReader(inputStream))
             val jsonString = reader.use { it.readText() }
-            
+
             val gson = Gson()
             val listType = object : TypeToken<List<ReferencePoint>>() {}.type
             val loadedPoints = gson.fromJson<List<ReferencePoint>>(jsonString, listType)
-            
-            // 添加預設起點到參考點列表
-            allReferencePoints = listOf(defaultStartPoint) + loadedPoints
-            
-            // 自動設定起點
+            // 將 imageId 映射為與編輯器一致
+            val correctedPoints = loadedPoints.map { it.copy(imageId = mapImageId(it.imageId)) }
+
+            allReferencePoints = listOf(defaultStartPoint) + correctedPoints
+
+            // 載入室內自定義路線
+            availableCustomRoutes = IndoorRouteManager.getAllRoutes(context)
+
+            // 起點預設為入口
             startPoint = defaultStartPoint
             startQuery = defaultStartPoint.name
-            
-            // 如果有初始目的地，自動搜尋並設定
-            if (!initialDestination.isNullOrEmpty()) {
-                val destination = allReferencePoints.firstOrNull { point -> 
-                    point.name.contains(initialDestination, ignoreCase = true)
+
+            // 如果外部傳入初始目的地
+            // 定義 planRoute 函數
+            fun planRoute() {
+                if (startPoint == null || endPoint == null) {
+                    scope.launch { snackbarHostState.showSnackbar("請先設定起點和終點") }
+                    return
                 }
-                if (destination != null) {
-                    endPoint = destination
-                    destinationQuery = destination.name
-                    
-                    // 自動規劃路線
-                    navigationPath = findPath(allReferencePoints, startPoint!!, destination)
-                    
-                    // 更新視圖
-                    customImageViewRef.value?.let { view ->
-                        view.startPoint = startPoint
-                        view.endPoint = endPoint
-                        view.navigationPath = navigationPath
-                        view.invalidate()
-                    }
-                    
-                    // 展開搜尋區域以顯示結果
-                    isSearchExpanded = true
-                    
-                    scope.launch {
-                        snackbarHostState.showSnackbar("已自動規劃從入口到 ${destination.name} 的路線")
-                    }
+
+                val s = startPoint!!
+                val e = endPoint!!
+
+                // 1) 嘗試正向匹配
+                val forward = availableCustomRoutes.firstOrNull { r ->
+                    val rp0 = r.points.firstOrNull()
+                    val rpn = r.points.lastOrNull()
+                    isSameEndpoint(rp0, s) && isSameEndpoint(rpn, e)
+                }
+
+                // 2) 嘗試反向匹配
+                val reversed = availableCustomRoutes.firstOrNull { r ->
+                    val rp0 = r.points.firstOrNull()
+                    val rpn = r.points.lastOrNull()
+                    isSameEndpoint(rp0, e) && isSameEndpoint(rpn, s)
+                }
+
+                val appliedRoutePoints: List<ReferencePoint>?
+                val routeUsed: IndoorCustomRoute?
+                if (forward != null) {
+                    appliedRoutePoints = forward.points
+                    routeUsed = forward
+                } else if (reversed != null) {
+                    appliedRoutePoints = reversed.points.reversed()
+                    routeUsed = reversed
                 } else {
-                    // 目的地未找到，但仍設定起點
-                    destinationQuery = initialDestination
-                    isSearchExpanded = true
-                    
-                    scope.launch {
-                        snackbarHostState.showSnackbar("未找到 $initialDestination，請手動搜尋")
+                    appliedRoutePoints = null
+                    routeUsed = null
+                }
+
+                if (appliedRoutePoints != null) {
+                    selectedCustomRoute = routeUsed
+                    navigationPath = NavigationPath(
+                        points = appliedRoutePoints,
+                        totalDistance = calculateRouteDistance(appliedRoutePoints)
+                    )
+                    appliedRoutePoints.firstOrNull()?.let { currentImageId = it.imageId }
+
+                    customImageViewRef.value?.apply {
+                        startPoint = s
+                        endPoint = e
+                        navigationPath = navigationPath
+                        invalidate()
                     }
+
+                    scope.launch { snackbarHostState.showSnackbar("使用自定義路線：${routeUsed?.name}") }
+                } else {
+                    // 回退直線
+                    selectedCustomRoute = null
+                    navigationPath = findPath(allReferencePoints, s, e)
+
+                    customImageViewRef.value?.apply {
+                        startPoint = s
+                        endPoint = e
+                        navigationPath = navigationPath
+                        invalidate()
+                    }
+
+                    val distance = "%.2f".format(navigationPath!!.totalDistance)
+                    scope.launch { snackbarHostState.showSnackbar("路徑規劃完成，總距離: $distance 單位") }
                 }
             }
-            
-            Log.d("IndoorMapScreen", "Loaded ${allReferencePoints.size} reference points from JSON")
+
+            if (!initialDestination.isNullOrEmpty()) {
+                val dest = allReferencePoints.firstOrNull { p ->
+                    normalizeName(p.name).contains(normalizeName(initialDestination))
+                }
+                if (dest != null) {
+                    endPoint = dest
+                    destinationQuery = dest.name
+                    // 使用 planRoute，優先套用自定義路線（修正：加上括號呼叫）
+                    planRoute()
+                } else {
+                    destinationQuery = initialDestination
+                    isSearchExpanded = true
+                    scope.launch { snackbarHostState.showSnackbar("未找到 $initialDestination，請手動搜尋") }
+                }
+            }
+
+            Log.d("IndoorMapScreen", "Loaded ${allReferencePoints.size} points, customRoutes=${availableCustomRoutes.size}")
         } catch (e: Exception) {
             Log.e("IndoorMapScreen", "Error loading reference points", e)
-            
-            // 錯誤時仍設定預設起點
             allReferencePoints = listOf(defaultStartPoint)
             startPoint = defaultStartPoint
             startQuery = defaultStartPoint.name
-            
-            scope.launch {
-                snackbarHostState.showSnackbar("載入教室數據失敗，但已設定入口為起點")
-            }
+            // 仍嘗試載入自定義路線
+            runCatching { availableCustomRoutes = IndoorRouteManager.getAllRoutes(context) }
+            scope.launch { snackbarHostState.showSnackbar("載入教室數據失敗，但已設定入口為起點") }
         }
     }
 
@@ -503,24 +597,74 @@ fun IndoorMapScreen(
         }
     }
 
-    // 規劃路線
+    // 規劃路線：優先匹配自定義路線，並支援反向匹配；若未匹配則退回直線
     fun planRoute() {
-        if (startPoint != null && endPoint != null) {
-            navigationPath = findPath(allReferencePoints, startPoint!!, endPoint!!)
-            
-            customImageViewRef.value?.startPoint = startPoint
-            customImageViewRef.value?.endPoint = endPoint
-            customImageViewRef.value?.navigationPath = navigationPath
-            customImageViewRef.value?.invalidate()
-            
-            val distance = "%.2f".format(navigationPath!!.totalDistance)
-            scope.launch {
-                snackbarHostState.showSnackbar("路徑規劃完成，總距離: $distance 單位")
-            }
+        if (startPoint == null || endPoint == null) {
+            scope.launch { snackbarHostState.showSnackbar("請先設定起點和終點") }
+            return
+        }
+
+        val s = startPoint!!
+        val e = endPoint!!
+
+        // 1) 嘗試正向匹配
+        val forward = availableCustomRoutes.firstOrNull { r ->
+            val rp0 = r.points.firstOrNull()
+            val rpn = r.points.lastOrNull()
+            isSameEndpoint(rp0, s) && isSameEndpoint(rpn, e)
+        }
+
+        // 2) 嘗試反向匹配
+        val reversed = availableCustomRoutes.firstOrNull { r ->
+            val rp0 = r.points.firstOrNull()
+            val rpn = r.points.lastOrNull()
+            isSameEndpoint(rp0, e) && isSameEndpoint(rpn, s)
+        }
+
+        val appliedRoutePoints: List<ReferencePoint>?
+        val routeUsed: IndoorCustomRoute?
+        if (forward != null) {
+            appliedRoutePoints = forward.points
+            routeUsed = forward
+        } else if (reversed != null) {
+            appliedRoutePoints = reversed.points.reversed()
+            routeUsed = reversed
         } else {
-            scope.launch {
-                snackbarHostState.showSnackbar("請先設定起點和終點")
+            appliedRoutePoints = null
+            routeUsed = null
+        }
+
+        if (appliedRoutePoints != null) {
+            selectedCustomRoute = routeUsed
+            navigationPath = NavigationPath(
+                points = appliedRoutePoints,
+                totalDistance = calculateRouteDistance(appliedRoutePoints) // 修正：使用新增函數
+            )
+            // 同步樓層（以第一個點為準）
+            appliedRoutePoints.firstOrNull()?.let { currentImageId = it.imageId }
+
+            customImageViewRef.value?.apply {
+                startPoint = s
+                endPoint = e
+                navigationPath = navigationPath
+                invalidate()
             }
+
+            scope.launch { snackbarHostState.showSnackbar("使用自定義路線：${routeUsed?.name}") }
+        } else {
+            // 回退直線
+            selectedCustomRoute = null
+            navigationPath = findPath(allReferencePoints, s, e)
+
+            customImageViewRef.value?.apply {
+                startPoint = s
+                endPoint = e
+                navigationPath = navigationPath
+                invalidate()
+            }
+
+            val distance = "%.2f".format(navigationPath!!.totalDistance)
+            scope.launch { snackbarHostState.showSnackbar("路徑規劃完成，總距離: $distance 單位") }
         }
     }
 
@@ -901,85 +1045,21 @@ fun IndoorMapScreen(
                             isZoomEnabled = true
                             setScaleType(android.widget.ImageView.ScaleType.MATRIX)
 
-                            setOnTouchListener { _, event ->
-                                when (event.action) {
-                                    MotionEvent.ACTION_DOWN -> {
-                                        isGestureInProgress = true
+                            setOnTouchImageViewListener(object : OnTouchImageViewListener {
+                                private var lastCallTime = 0L
+
+                                override fun onMove() {
+                                    val currentTime = System.currentTimeMillis()
+                                    if (currentTime - lastCallTime > 16) {
                                         postInvalidateOnAnimation()
-                                        false
-                                    }
-                                    MotionEvent.ACTION_UP -> {
-                                        isGestureInProgress = false
-                                        postDelayed({ postInvalidateOnAnimation() }, 100)
-                                        false
-                                    }
-                                    MotionEvent.ACTION_CANCEL -> {
-                                        isGestureInProgress = false
-                                        postDelayed({ postInvalidateOnAnimation() }, 100)
-                                        false
-                                    }
-                                    MotionEvent.ACTION_MOVE -> {
-                                        if (!isGestureInProgress) {
-                                            isGestureInProgress = true
-                                            postInvalidateOnAnimation()
-                                        }
-                                        false
-                                    }
-                                    else -> false
-                                }
-                            }
-
-                            post {
-                                imageSize = IntSize(drawable.intrinsicWidth, drawable.intrinsicHeight)
-
-                                val overlayView = object : View(context) {
-                                    init {
-                                        setLayerType(View.LAYER_TYPE_HARDWARE, null)
-                                    }
-
-                                    override fun onDraw(canvas: Canvas) {
-                                        super.onDraw(canvas)
-                                        (touchImageViewRef.value as? MyCustomImageView)?.let { view ->
-                                            // 繪製導航路徑
-                                            view.navigationPath?.let { path ->
-                                                view.drawNavigationPath(canvas, path.points)
-                                            }
-                                            
-                                            // 繪製參考點（只顯示當前地圖的點）
-                                            val currentMapPoints = allReferencePoints.filter { it.imageId == currentImageId }
-                                            view.drawReferencePointsOnCanvas(canvas, currentMapPoints)
-                                            
-                                            // 繪製起點和終點
-                                            view.startPoint?.let { view.drawSpecialPoint(canvas, it, android.graphics.Color.GREEN, "S") }
-                                            view.endPoint?.let { view.drawSpecialPoint(canvas, it, android.graphics.Color.RED, "E") }
-                                        }
+                                        lastCallTime = currentTime
                                     }
                                 }
-
-                                setOnTouchImageViewListener(object : OnTouchImageViewListener {
-                                    private var lastCallTime = 0L
-
-                                    override fun onMove() {
-                                        val currentTime = System.currentTimeMillis()
-                                        if (currentTime - lastCallTime > 16) {
-                                            overlayView.postInvalidateOnAnimation()
-                                            lastCallTime = currentTime
-                                        }
-                                    }
-                                })
-
-                                (parent as? android.view.ViewGroup)?.addView(overlayView,
-                                    android.view.ViewGroup.LayoutParams(
-                                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                                    )
-                                )
-                            }
+                            })
                         }
                     },
                     update = { view ->
                         (view as? MyCustomImageView)?.let { mv ->
-                            // 確保包含預設起點
                             val currentMapPoints = allReferencePoints.filter { it.imageId == currentImageId }
                             mv.overlayPoints = currentMapPoints
                             mv.currentImageId = currentImageId
@@ -987,6 +1067,8 @@ fun IndoorMapScreen(
                             mv.startPoint = startPoint
                             mv.endPoint = endPoint
                             mv.highlightedPointId = highlightedPointId
+                            // 新增：保持隱藏設定
+                            mv.hideMarkersWhenNavigating = true
                             mv.invalidate()
                         }
                     },
@@ -995,6 +1077,103 @@ fun IndoorMapScreen(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
+        }
+        
+        // 新增：自定義路線選擇對話框
+        if (showCustomRoutesDialog) {
+            AlertDialog(
+                onDismissRequest = { showCustomRoutesDialog = false },
+                title = { Text("選擇自定義室內路線") },
+                text = {
+                    if (availableCustomRoutes.isEmpty()) {
+                        Text("沒有可用的自定義路線，請先在路線編輯器中創建")
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.heightIn(max = 300.dp)
+                        ) {
+                            items(availableCustomRoutes) { route ->
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp)
+                                        .clickable {
+                                            // 選擇此路線
+                                            if (route.points.size >= 2) {
+                                                startPoint = route.points.first()
+                                                startQuery = route.points.first().name
+                                                
+                                                endPoint = route.points.last()
+                                                destinationQuery = route.points.last().name
+                                                
+                                                // 設定路線
+                                                navigationPath = NavigationPath(
+                                                    points = route.points,
+                                                    totalDistance = calculateRouteDistance(route.points) // 修正：使用新增函數
+                                                )
+                                                
+                                                selectedCustomRoute = route
+                                                
+                                                // 更新地圖
+                                                customImageViewRef.value?.startPoint = startPoint
+                                                customImageViewRef.value?.endPoint = endPoint
+                                                customImageViewRef.value?.navigationPath = navigationPath
+                                                customImageViewRef.value?.invalidate()
+                                                
+                                                // 切換到正確的樓層
+                                                val firstPoint = route.points.firstOrNull()
+                                                if (firstPoint != null) {
+                                                    currentImageId = firstPoint.imageId
+                                                }
+                                                
+                                                showCustomRoutesDialog = false
+                                                
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar("已選擇自定義路線: ${route.name}")
+                                                }
+                                            } else {
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar("此路線點數不足，無法使用")
+                                                }
+                                            }
+                                        },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                    )
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(12.dp)
+                                    ) {
+                                        Text(
+                                            text = route.name,
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                        
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        
+                                        Text(
+                                            text = if (route.description.isNotEmpty()) route.description else "從 ${route.points.firstOrNull()?.name ?: "未知"} 到 ${route.points.lastOrNull()?.name ?: "未知"}",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        
+                                        Text(
+                                            text = "${route.points.size} 個點 | 預計 ${route.estimatedTimeInMinutes} 分鐘",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color.Gray
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showCustomRoutesDialog = false }) {
+                        Text("關閉")
+                    }
+                }
+            )
         }
     }
 }

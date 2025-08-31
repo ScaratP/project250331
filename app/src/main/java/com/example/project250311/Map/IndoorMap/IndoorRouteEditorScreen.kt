@@ -58,7 +58,7 @@ data class IndoorCustomRoute(
     val lastModified: Long = System.currentTimeMillis()
 )
 
-// 室內路線管理器 - 處理室內路線保存和讀取
+// 修改：室內路線管理器 - 確保可以被其他檔案訪問
 object IndoorRouteManager {
     private const val ROUTES_PREF_KEY = "indoor_custom_routes"
     
@@ -102,6 +102,18 @@ object IndoorRouteManager {
         
         val type = object : TypeToken<List<IndoorCustomRoute>>() {}.type
         return gson.fromJson(routesJson, type) ?: listOf()
+    }
+    
+    // 新增：根據起點和終點查找匹配的路線
+    fun findRouteByStartAndEnd(context: Context, startName: String, endName: String): IndoorCustomRoute? {
+        val allRoutes = getAllRoutes(context)
+        return allRoutes.firstOrNull { route ->
+            val start = route.points.firstOrNull()
+            val end = route.points.lastOrNull()
+            
+            (start?.name?.equals(startName, ignoreCase = true) == true && 
+             end?.name?.equals(endName, ignoreCase = true) == true)
+        }
     }
 }
 

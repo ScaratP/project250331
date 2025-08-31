@@ -56,6 +56,7 @@ import com.google.android.gms.maps.model.Dot
 import com.google.android.gms.maps.model.Gap
 import com.google.android.gms.maps.model.PatternItem
 import androidx.navigation.NavController
+import com.example.project250311.Map.IndoorMap.IndoorRouteManager
 import com.example.project250311.Map.model.DirectionsResponse
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 
@@ -909,7 +910,11 @@ fun MapScreen(
                                         containerColor = MaterialTheme.colorScheme.secondary
                                     )
                                 ) {
-                                    Text("看室內路線", style = MaterialTheme.typography.bodySmall)
+                                    // 檢查是否有自定義路線
+                                    val customRoutes = IndoorRouteManager.getAllRoutes(context)
+                                    val customRouteText = "看室內路線"
+                                    
+                                    Text(customRouteText, style = MaterialTheme.typography.bodySmall)
                                 }
                             }
 
@@ -1123,19 +1128,32 @@ fun MapScreen(
             )
         }
 
-        // 室內地圖對話框
+        // 修改：室內導航對話框，添加自定義路線支援
         if (showIndoorMapDialog) {
             AlertDialog(
                 onDismissRequest = { showIndoorMapDialog = false },
                 title = { Text("已到達理工學院") },
                 text = { 
-                    Text(
-                        if (indoorDestination.isNotEmpty()) {
-                            "您已到達理工學院，是否要進入室內地圖導航到 $indoorDestination？"
-                        } else {
-                            "您已到達理工學院，是否要查看室內地圖？"
+                    Column {
+                        Text(
+                            if (indoorDestination.isNotEmpty()) {
+                                "您已到達理工學院，是否要進入室內地圖導航到 $indoorDestination？"
+                            } else {
+                                "您已到達理工學院，是否要查看室內地圖？"
+                            }
+                        )
+                        
+                        // 新增：顯示室內自定義路線信息
+                        val customRoutes = IndoorRouteManager.getAllRoutes(context)
+                        if (customRoutes.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "已找到 ${customRoutes.size} 條室內自定義路線可用",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         }
-                    ) 
+                    }
                 },
                 dismissButton = {
                     TextButton(onClick = { 
