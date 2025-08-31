@@ -33,12 +33,14 @@ import com.example.project250311.Data.AppDatabase
 import com.example.project250311.Data.CourseRepository
 import com.example.project250311.Data.CourseViewModel
 import com.example.project250311.Map.IndoorMap.IndoorMapScreen
+import com.example.project250311.Map.IndoorMap.IndoorRouteEditorScreen
 import com.example.project250311.Schedule.GetSchedule.ScheduleScreen
 import com.example.project250311.Schedule.NoSchool.LeaveSystemScreen
 import com.example.project250311.Schedule.Note.EnhancedNoteScreen
 import com.example.project250311.Schedule.Note.NoteListScreen
 import com.example.project250311.Schedule.Notice.NotificationManagerScreen
 import com.example.project250311.Map.MapScreen  // 新增 import
+import com.example.project250311.Map.RouteEditorScreen
 import com.example.project250311.Schedule.Food.FoodScreen  // 新增 import
 import com.example.project250311.ui.theme.Project250311Theme
 import kotlinx.coroutines.launch
@@ -130,7 +132,9 @@ fun AppWithNavigation(
             icon = Icons.Default.Map,
             subItems = listOf(
                 NavigationItem("map", "地圖", Icons.Default.Map),
-                NavigationItem("indoormap", "室內地圖", Icons.Default.Star)
+                NavigationItem("indoormap", "室內地圖", Icons.Default.Star),
+                NavigationItem("route_editor", "路線編輯", Icons.Default.Edit),
+                NavigationItem("indoor_route_editor", "室內路線編輯", Icons.Default.Edit)
             )
         ),
         MainCategory(
@@ -344,6 +348,14 @@ fun AppNavHost(
             IndoorMapScreen(
                 initialDestination = if (destination.isNotEmpty()) destination else null
             )
+        }
+
+        composable("route_editor") {
+            RouteEditorScreen(navController)
+        }
+
+        composable("indoor_route_editor"){
+            IndoorRouteEditorScreen(navController)
         }
 
         // 課表畫面

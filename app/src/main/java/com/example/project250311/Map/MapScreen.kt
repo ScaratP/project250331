@@ -9,6 +9,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.location.Location
 import android.os.Looper
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -55,6 +56,7 @@ import com.google.android.gms.maps.model.Dot
 import com.google.android.gms.maps.model.Gap
 import com.google.android.gms.maps.model.PatternItem
 import androidx.navigation.NavController
+import com.example.project250311.Map.model.DirectionsResponse
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 
 // 1. CustomPoint 包含 description，用於顯示介紹對話框
@@ -64,6 +66,8 @@ data class CustomPoint(
     val description: String,
     val hasIndoorMap: Boolean = false // 新增標記
 )
+
+
 
 @SuppressLint("MissingPermission")
 @Composable
@@ -306,7 +310,7 @@ fun MapScreen(
         }
     }
 
-    // 修正：處理目的地搜尋
+    // 修正：處理目的地搜尋 - 移除 @Composable 註解
     fun handleSearch() {
         val point = customPoints.firstOrNull { customPoint -> 
             customPoint.name.contains(searchQuery, ignoreCase = true)
@@ -331,28 +335,29 @@ fun MapScreen(
             
             // 計算路線
             val startPoint = getActualStartPoint()
-            android.util.Log.d("MapScreen", "起點: $startPoint, 終點: ${point.location}")
+            Log.d("MapScreen", "起點: $startPoint, 終點: ${point.location}")
             
             drawRoute(
+                context = context,
                 origin = startPoint,
                 dest = point.location,
                 onStart = { 
                     isRouting = true
-                    android.util.Log.d("MapScreen", "開始計算路線")
+                    Log.d("MapScreen", "開始計算路線")
                 },
                 onSuccess = { points ->
                     isRouting = false
                     routePoints = points
-                    android.util.Log.d("MapScreen", "路線計算成功，點數: ${points.size}")
+                    Log.d("MapScreen", "路線計算成功，點數: ${points.size}")
                 },
                 onTime = { timeText ->
                     travelTimeText = timeText
-                    android.util.Log.d("MapScreen", "預計時間: $timeText")
+                    Log.d("MapScreen", "預計時間: $timeText")
                 },
                 onError = { errorMessage ->
                     isRouting = false
                     errorMsg = errorMessage
-                    android.util.Log.e("MapScreen", "路線計算失敗: $errorMessage")
+                    Log.e("MapScreen", "路線計算失敗: $errorMessage")
                     scope.launch {
                         delay(3000)
                         errorMsg = null
@@ -378,6 +383,7 @@ fun MapScreen(
             
             // 計算到理工學院的路線
             drawRoute(
+                context = context,
                 origin = getActualStartPoint(),
                 dest = engineeringCollege.location,
                 onStart = { isRouting = true },
@@ -438,6 +444,7 @@ fun MapScreen(
 
     val locationCallback = remember {
         object : LocationCallback() {
+            // 移除 @Composable 註解
             override fun onLocationResult(result: LocationResult) {
                 val loc: Location? = result.lastLocation
                 if (loc != null) {
@@ -450,6 +457,7 @@ fun MapScreen(
                             if (prev == null || distanceBetween(prev, newLatLng) > 20f) {
                                 lastRerouteLoc = newLatLng
                                 drawRoute(
+                                    context = context,
                                     origin = newLatLng,
                                     dest = dest,
                                     onStart = { isRouting = true },
@@ -541,16 +549,17 @@ fun MapScreen(
                 travelTimeText = null
                 
                 val startPoint = getActualStartPoint()
-                android.util.Log.d("MapScreen", "地圖點擊 - 起點: $startPoint, 終點: $latLng")
+                Log.d("MapScreen", "地圖點擊 - 起點: $startPoint, 終點: $latLng")
                 
                 drawRoute(
+                    context = context,
                     origin = startPoint,
                     dest = latLng,
                     onStart = { isRouting = true },
                     onSuccess = { points ->
                         isRouting = false
                         routePoints = points
-                        android.util.Log.d("MapScreen", "點擊路線成功，點數: ${points.size}")
+                        Log.d("MapScreen", "點擊路線成功，點數: ${points.size}")
                     },
                     onTime = { timeText ->
                         travelTimeText = timeText
@@ -558,7 +567,7 @@ fun MapScreen(
                     onError = { errorMessage ->
                         isRouting = false
                         errorMsg = errorMessage
-                        android.util.Log.e("MapScreen", "點擊路線失敗: $errorMessage")
+                        Log.e("MapScreen", "點擊路線失敗: $errorMessage")
                         scope.launch {
                             delay(3000)
                             errorMsg = null
@@ -1086,6 +1095,7 @@ fun MapScreen(
                         lastRerouteLoc = getActualStartPoint()
                         travelTimeText = null
                         drawRoute(
+                            context = context,
                             origin = getActualStartPoint(),
                             dest = point.location,
                             onStart = { isRouting = true },
@@ -1165,14 +1175,16 @@ fun MapScreen(
 // Utility：計算兩點距離（單位：公尺）
 fun distanceBetween(a: LatLng, b: LatLng): Float {
     val result = FloatArray(1)
-    android.location.Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, result)
+    Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, result)
     return result[0]
 }
 
 /**
  * drawRoute 新增 onTime callback：從 API 回應中取出「duration.text」並回傳
+ * 修改：將 drawRoute 移出 MapScreen Composable 並添加 context 參數
  */
 fun drawRoute(
+    context: Context,
     origin: LatLng?,
     dest: LatLng,
     onStart: () -> Unit = {},
@@ -1181,31 +1193,56 @@ fun drawRoute(
     onError: (String) -> Unit
 ) {
     if (origin == null) {
-        android.util.Log.e("MapScreen", "起點為空")
+        Log.e("MapScreen", "起點為空")
         onError("尚未取得起點位置")
         return
     }
     
+    onStart()
+    
+    // 首先嘗試查找自定義路線
+    val customRoutes = RouteManager.getAllRoutes(context)
+    
+    // 檢查是否有符合的自定義路線
+    val customRoute = findMatchingCustomRoute(customRoutes, origin, dest)
+    
+    if (customRoute != null) {
+        Log.d("MapScreen", "使用自定義路線: ${customRoute.name}")
+        onSuccess(customRoute.points)
+        onTime("約${customRoute.estimatedTimeInMinutes}分鐘 (自定義路線)")
+        return
+    }
+    
+    // 如果沒有自定義路線，嘗試查找預定義路線
+    val campusRoute = CampusRoutes.findRoute(origin, dest) ?: CampusRoutes.findReverseRoute(origin, dest)
+    
+    if (campusRoute != null) {
+        Log.d("MapScreen", "使用預定義校園路線: ${campusRoute.name}")
+        onSuccess(campusRoute.points)
+        onTime("約${campusRoute.estimatedTimeInMinutes}分鐘 (校園路線)")
+        return
+    }
+    
     // 檢查起點和終點是否太近
-    val distance = android.location.Location("start").apply {
+    val distance = Location("start").apply {
         latitude = origin.latitude
         longitude = origin.longitude
-    }.distanceTo(android.location.Location("end").apply {
+    }.distanceTo(Location("end").apply {
         latitude = dest.latitude
         longitude = dest.longitude
     })
     
-    android.util.Log.d("MapScreen", "起點終點距離: ${distance}公尺")
+    Log.d("MapScreen", "起點終點距離: ${distance}公尺")
     
     // 如果距離太近（小於10公尺），直接繪製直線
     if (distance < 10f) {
-        android.util.Log.d("MapScreen", "距離太近，繪製直線路徑")
+        Log.d("MapScreen", "距離太近，繪製直線路徑")
         onSuccess(listOf(origin, dest))
         onTime("1分鐘")
         return
     }
     
-    android.util.Log.d("MapScreen", "開始請求路線: ${origin.latitude},${origin.longitude} -> ${dest.latitude},${dest.longitude}")
+    Log.d("MapScreen", "開始請求路線: ${origin.latitude},${origin.longitude} -> ${dest.latitude},${dest.longitude}")
     onStart()
     
     val o = "${origin.latitude},${origin.longitude}"
@@ -1216,22 +1253,22 @@ fun drawRoute(
             origin = o,
             destination = d,
             mode = "walking",
-            apiKey = "AIzaSyDbCPl8a9m7dGMgTqF2GFL_cPSRjV_hiOQ"
-        ).enqueue(object : Callback<com.example.project250311.Map.model.DirectionsResponse> {
+            apiKey = "AIzaSyDj1CTmLJMsvCTRwwVJrCFHp6Cqt7wVKp8"
+        ).enqueue(object : Callback<DirectionsResponse> {
             override fun onResponse(
-                call: Call<com.example.project250311.Map.model.DirectionsResponse>,
-                response: Response<com.example.project250311.Map.model.DirectionsResponse>
+                call: Call<DirectionsResponse>,
+                response: Response<DirectionsResponse>
             ) {
-                android.util.Log.d("MapScreen", "API 回應碼: ${response.code()}")
+                Log.d("MapScreen", "API 回應碼: ${response.code()}")
                 
                 if (response.isSuccessful) {
                     val body = response.body()
-                    android.util.Log.d("MapScreen", "回應內容: $body")
+                    Log.d("MapScreen", "回應內容: $body")
                     
                     val route = body?.routes?.firstOrNull()
                     
                     if (route == null) {
-                        android.util.Log.w("MapScreen", "API 未回傳路線，可能是距離太近或無法步行到達，使用直線路徑")
+                        Log.w("MapScreen", "API 未回傳路線，可能是距離太近或無法步行到達，使用直線路徑")
                         // 使用直線路徑作為備選方案
                         onSuccess(listOf(origin, dest))
                         onTime("約${(distance / 80).toInt() + 1}分鐘") // 假設步行速度80公尺/分鐘
@@ -1246,18 +1283,18 @@ fun drawRoute(
 
                     if (!points.isNullOrEmpty()) {
                         val decodedPoints = PolylineUtils.decodePolyline(points)
-                        android.util.Log.d("MapScreen", "解碼後路徑點數: ${decodedPoints.size}")
+                        Log.d("MapScreen", "解碼後路徑點數: ${decodedPoints.size}")
                         onSuccess(decodedPoints)
                     } else {
-                        android.util.Log.w("MapScreen", "路線數據為空，使用直線路徑")
+                        Log.w("MapScreen", "路線數據為空，使用直線路徑")
                         onSuccess(listOf(origin, dest))
                         onTime(durationText)
                     }
                 } else {
-                    android.util.Log.e("MapScreen", "API 錯誤: ${response.code()}, ${response.message()}")
+                    Log.e("MapScreen", "API 錯誤: ${response.code()}, ${response.message()}")
                     
                     // API 失敗時使用直線路徑作為備選方案
-                    android.util.Log.w("MapScreen", "API 失敗，使用直線路徑作為備選方案")
+                    Log.w("MapScreen", "API 失敗，使用直線路徑作為備選方案")
                     onSuccess(listOf(origin, dest))
                     onTime("約${(distance / 80).toInt() + 1}分鐘")
                     
@@ -1273,10 +1310,10 @@ fun drawRoute(
             }
 
             override fun onFailure(
-                call: Call<com.example.project250311.Map.model.DirectionsResponse>,
+                call: Call<DirectionsResponse>,
                 t: Throwable
             ) {
-                android.util.Log.e("MapScreen", "網路請求失敗，使用直線路徑", t)
+                Log.e("MapScreen", "網路請求失敗，使用直線路徑", t)
                 // 網路失敗時使用直線路徑
                 onSuccess(listOf(origin, dest))
                 onTime("約${(distance / 80).toInt() + 1}分鐘")
@@ -1284,11 +1321,54 @@ fun drawRoute(
             }
         })
     } catch (e: Exception) {
-        android.util.Log.e("MapScreen", "請求異常，使用直線路徑", e)
+        Log.e("MapScreen", "請求異常，使用直線路徑", e)
         onSuccess(listOf(origin, dest))
         onTime("約${(distance / 80).toInt() + 1}分鐘")
         onError("請求異常（已使用直線路徑）：${e.localizedMessage}")
     }
+}
+
+// 新增：查找匹配的自定義路線
+fun findMatchingCustomRoute(routes: List<CustomRoute>, origin: LatLng, dest: LatLng): CustomRoute? {
+    // 計算起點和終點的最大允許距離（公尺）
+    val MAX_START_DISTANCE = 50.0
+    val MAX_END_DISTANCE = 50.0
+    
+    // 檢查每條自定義路線
+    for (route in routes) {
+        if (route.points.size < 2) continue
+        
+        // 檢查路線的起點和終點是否與查詢的起點和終點匹配
+        val routeStart = route.points.first()
+        val routeEnd = route.points.last()
+        
+        val startDistance = distanceBetween(origin, routeStart)
+        val endDistance = distanceBetween(dest, routeEnd)
+        
+        // 如果起點和終點都在容許範圍內，使用這條路線
+        if (startDistance <= MAX_START_DISTANCE && endDistance <= MAX_END_DISTANCE) {
+            return route
+        }
+        
+        // 檢查反向路線
+        val reverseStartDistance = distanceBetween(origin, routeEnd)
+        val reverseEndDistance = distanceBetween(dest, routeStart)
+        
+        // 如果反向的起點和終點都在容許範圍內，使用反向的路線
+        if (reverseStartDistance <= MAX_START_DISTANCE && reverseEndDistance <= MAX_END_DISTANCE) {
+            // 創建反向路線
+            return CustomRoute(
+                id = route.id + "_reversed",
+                name = "${route.name} (反向)",
+                description = route.description,
+                points = route.points.reversed(),
+                estimatedTimeInMinutes = route.estimatedTimeInMinutes,
+                color = route.color
+            )
+        }
+    }
+    
+    return null
 }
 
 // 創建灰色圓點圖標
