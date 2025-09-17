@@ -66,13 +66,14 @@
 - **Jetpack Compose UI**：使用現代化的 Compose 構建用戶界面
 - **Canvas 繪圖**：使用 Android Canvas API 實現路徑和點位繪製
 - **觸控事件處理**：實現平滑的地圖交互體驗
-- **GSON 數據處理**：使用 GSON 解析 JSON 格式的教室數據
+- **Room 資料庫**：使用 Room 持久化庫管理教室和建築資料
 
 ### 關鍵數據模型
 - **ReferencePoint**：表示地圖上的參考點，包含位置坐標與屬性
-- **MapImage**：地圖圖像資源信息
-- **NavigationPath**：導航路徑信息，包含點位序列與距離
-- **CurrentPosition**：當前位置信息
+- **BuildingEntity**：建築物實體，包含建築資訊和入口位置
+- **FloorEntity**：樓層實體，包含樓層資訊和對應圖片
+- **CorridorVectorEntity**：走廊向量實體，定義走廊的起終點
+- **AreaConnectivityEntity**：區域連通性實體，定義可通行區域
 
 ## 📋 使用指南
 
@@ -96,53 +97,85 @@
 
 ## 🗂️ 數據來源
 
-室內地圖系統使用 `classroom_points.json` 文件存儲所有參考點數據。此數據包括：
-- 教室編號和名稱
-- 教室坐標（使用百分比坐標系統，與圖像尺寸無關）
-- 所屬樓層信息
+室內地圖系統現在使用 **Room 資料庫** 存儲所有參考點數據。資料庫包括：
+
+### 資料庫架構
+- **buildings**：建築物資訊表
+  - 建築物 ID、名稱、描述
+  - 入口座標和樓層資訊
+  
+- **floors**：樓層資訊表
+  - 樓層編號、名稱
+  - 對應的圖片資源 ID
+  
+- **reference_points**：參考點資訊表
+  - 教室編號和名稱
+  - 教室坐標（使用百分比坐標系統）
+  - 點位類型（教室、走廊、樓梯等）
+  - 所屬建築物和樓層資訊
+  
+- **corridor_vectors**：走廊向量表
+  - 走廊的起始和終點座標
+  - 走廊標識和描述
+  
+- **area_connectivity**：區域連通性表
+  - 可通行區域的邊界座標
+  - 連接的走廊資訊
+
+### 資料管理
+- **自動初始化**：首次啟動時自動載入預設的教室和設施資料
+- **動態更新**：支援即時新增、修改和刪除參考點
+- **資料持久化**：所有變更自動保存到本地資料庫
+- **搜尋功能**：支援快速搜尋和過濾功能
 
 ## 🔍 開發示例
 
 ### 新增自定義參考點
 ```kotlin
+// 使用 ViewModel 新增參考點
 val newPoint = ReferencePoint.createSimplePoint(
     name = "自習室",
     x = 50.0,  // X 坐標（百分比）
     y = 50.0,  // Y 坐標（百分比）
     imageId = R.drawable.se1,  // 樓層圖片資源ID
-    scanCount = 0
+    type = PointType.OTHER
 )
-allReferencePoints += newPoint
+viewModel.addReferencePoint(newPoint)
 ```
 
-### 計算兩點之間的路徑
+### 搜尋參考點
 ```kotlin
-val startPoint = /* 獲取起始參考點 */
-val endPoint = /* 獲取目標參考點 */
-val path = findPath(allReferencePoints, startPoint, endPoint)
-// 顯示路徑
-customImageView.navigationPath = path
-customImageView.startPoint = startPoint
-customImageView.endPoint = endPoint
-customImageView.invalidate()
+// 使用 Flow 搜尋參考點
+viewModel.searchReferencePointsByName("sec101").collect { points ->
+    // 處理搜尋結果
+}
+```
+
+### 取得特定樓層的參考點
+```kotlin
+// 取得特定圖片ID的參考點
+viewModel.getReferencePointsByImageId(R.drawable.se1).collect { points ->
+    // 處理該樓層的參考點
+}
 ```
 
 ## 📐 系統架構
 
-該系統採用分層架構設計，主要包含：
+該系統採用現代化的 MVVM 架構設計，主要包含：
 - **UI 層**：使用 Jetpack Compose 構建的響應式用戶介面
-- **業務邏輯層**：處理路徑規劃、搜索等核心功能
-- **數據層**：管理教室參考點數據和地圖資源
-- **視圖層**：自定義的地圖視圖元件，處理觸控互動和繪圖
+- **ViewModel 層**：管理 UI 狀態和業務邏輯
+- **Repository 層**：統一的資料存取介面
+- **Database 層**：使用 Room 的本地資料庫
+- **View 層**：自定義的地圖視圖元件，處理觸控互動和繪圖
 
 ## 🔄 主要改進
 
-1. **簡化路徑計算**：移除複雜的跨地圖路徑規劃，使用直線距離計算
-2. **改善用戶體驗**：添加可收起的搜索介面和智能搜索建議
-3. **修正視覺問題**：確保導航路徑正確顯示在地圖上
-4. **優化介面設計**：移除不必要的標題欄，提供更大的地圖顯示區域
-5. **新增室外整合**：支援從室外地圖無縫切換到室內導航
-6. **預設起點功能**：自動設定理工學院入口為導航起點
-7. **室內路線快速查看**：在室外地圖規劃路線時可直接查看室內路線
-8. **智能目標識別**：自動判斷並提示支援室內導航的目的地
+1. **資料庫管理**：從 JSON 文件改為 Room 資料庫，提供更好的資料持久化和查詢功能
+2. **架構優化**：採用 MVVM 架構，提高代碼的可維護性和可測試性
+3. **動態資料**：支援即時新增、修改和刪除參考點，無需重啟應用
+4. **效能提升**：使用 Flow 進行響應式資料處理，提供更流暢的使用體驗
+5. **擴展性**：新增建築物、樓層、走廊向量等實體，支援更複雜的室內地圖功能
+6. **資料完整性**：使用外鍵約束確保資料一致性
+7. **搜尋功能**：提供強大的搜尋和過濾功能
+8. **預設資料**：自動載入理工學院的完整建築和教室資料
 
