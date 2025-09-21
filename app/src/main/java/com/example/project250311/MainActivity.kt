@@ -32,9 +32,8 @@ import com.example.project250311.Data.AppDatabase
 import com.example.project250311.Data.CourseRepository
 import com.example.project250311.Data.CourseViewModel
 import com.example.project250311.Map.IndoorMap.IndoorMapScreen
-import com.example.project250311.Map.IndoorMap.IndoorRouteEditorScreen
-import com.example.project250311.Map.MapScreen // 新增 import
-import com.example.project250311.Schedule.Food.FoodScreen // 新增 import
+import com.example.project250311.Map.MapScreen
+import com.example.project250311.Schedule.Food.FoodScreen
 import com.example.project250311.Schedule.GetSchedule.ScheduleScreen
 import com.example.project250311.Schedule.NoSchool.LeaveSystemScreen
 import com.example.project250311.Schedule.Note.EnhancedNoteScreen
@@ -333,18 +332,8 @@ fun AppNavHost(
                         )
         ) { backStackEntry ->
             val destination = backStackEntry.arguments?.getString("destination") ?: ""
-            IndoorMapScreen(
-                    initialDestination = if (destination.isNotEmpty()) destination else null
-            )
+            IndoorMapScreen(modifier= Modifier)
         }
-
-        // 新增：室內地圖資料管理
-        composable("indoor_map_manager") {
-            // 可以在這裡添加室內地圖資料管理界面
-        }
-
-        // 新增：室內路線編輯器
-        composable("indoor_route_editor") { IndoorRouteEditorScreen(navController) }
 
         // 課表畫面
         composable("schedule") { ScheduleScreen(courseViewModel) }

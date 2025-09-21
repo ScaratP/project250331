@@ -1,1599 +1,488 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.example.project250311.Map.IndoorMap
 
-import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.Path
-import android.graphics.PointF
-import android.util.AttributeSet
-import android.util.Log
-import android.view.View
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import android.content.res.Resources
+import android.graphics.Bitmap
+import android.graphics.Color
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.SwapVert
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
+import androidx.compose.foundation.gestures.TransformableState
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.project250311.Map.IndoorMap.Database.IndoorMapRepository
+import androidx.core.graphics.drawable.toBitmap
+import kotlinx.coroutines.*
+import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
 import com.example.project250311.R
-import com.ortiz.touchview.OnTouchImageViewListener
-import com.ortiz.touchview.TouchImageView
-import kotlin.math.pow
-import kotlin.math.sqrt
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 
-data class ReferencePoint(
-        val id: String,
-        val name: String,
-        val x: Double,
-        val y: Double,
-        val imageId: Int,
-        val scanCount: Int = 0,
-        // 新增類型屬性，用来區分教室、走廊、廁所等
-        val type: PointType = PointType.CLASSROOM,
-        // 新增：連接的走廊ID列表
-        var connectedCorridorIds: List<String> = emptyList()
-) {
-    companion object {
-        fun createSimplePoint(
-                name: String,
-                x: Double,
-                y: Double,
-                imageId: Int,
-                scanCount: Int = 0,
-                type: PointType = PointType.CLASSROOM
-        ): ReferencePoint {
-            val id = "RP${System.currentTimeMillis()}"
-            return ReferencePoint(id, name, x, y, imageId, scanCount, type)
+// ======================= 資料結構 =======================
+data class Node(
+    val x: Int,
+    val y: Int,
+    var g: Double = Double.POSITIVE_INFINITY,
+    var h: Double = 0.0,
+    var parent: Node? = null,
+    var walkable: Boolean = true
+) { val f: Double get() = g + h }
+
+data class Grid(val w: Int, val h: Int, val cells: BooleanArray) {
+    fun walkable(x: Int, y: Int) = x in 0 until w && y in 0 until h && cells[y * w + x]
+}
+
+// 八方向啟發式
+fun heuristic(ax: Int, ay: Int, bx: Int, by: Int): Double {
+    val dx = abs(ax - bx); val dy = abs(ay - by)
+    return (max(dx, dy) - min(dx, dy)) + 1.41421356 * min(dx, dy)
+}
+
+// 防止斜角鑽牆角
+fun neighbors(grid: Grid, n: Node): List<Node> {
+    val res = ArrayList<Node>(8)
+    for (dy in -1..1) for (dx in -1..1) {
+        if (dx == 0 && dy == 0) continue
+        val nx = n.x + dx; val ny = n.y + dy
+        if (!grid.walkable(nx, ny)) continue
+        if (dx != 0 && dy != 0) {
+            if (!grid.walkable(n.x + dx, n.y) || !grid.walkable(n.x, n.y + dy)) continue
         }
+        res.add(Node(nx, ny, walkable = true))
     }
+    return res
 }
 
-// 新增點位類型枚舉
-enum class PointType {
-    CLASSROOM, // 教室
-    CORRIDOR, // 走廊
-    STAIRS, // 樓梯
-    ELEVATOR, // 電梯
-    TOILET, // 廁所
-    ENTRANCE, // 入口
-    OTHER // 其他
-}
+fun aStar(grid: Grid, sx: Int, sy: Int, gx: Int, gy: Int): List<Node> {
+    if (!grid.walkable(sx, sy) || !grid.walkable(gx, gy)) return emptyList()
+    val open = java.util.PriorityQueue<Node>(compareBy<Node> { it.f }.thenBy { it.h })
+    val key = { x: Int, y: Int -> (y.toLong() shl 32) or (x.toLong() and 0xffffffff) }
+    val gScore = HashMap<Long, Double>()
+    val start = Node(sx, sy, g = 0.0, h = heuristic(sx, sy, gx, gy))
+    open.add(start); gScore[key(sx, sy)] = 0.0
 
-// 為點位類型獲取顏色
-fun getPointTypeColor(type: PointType): Color {
-    return when (type) {
-        PointType.CLASSROOM -> Color(0xFF1976D2) // 藍色
-        PointType.CORRIDOR -> Color(0xFFFF9800) // 橙色
-        PointType.STAIRS -> Color(0xFF4CAF50) // 綠色
-        PointType.ELEVATOR -> Color(0xFF9C27B0) // 紫色
-        PointType.TOILET -> Color(0xFF795548) // 棕色
-        PointType.ENTRANCE -> Color(0xFFF44336) // 紅色
-        PointType.OTHER -> Color(0xFF607D8B) // 藍灰色
-    }
-}
-
-// 修改: 為參考點生成顏色 - 考慮點位類型
-fun getPointColor(point: ReferencePoint): Color {
-    // 先檢查是否有特定類型，有則使用類型顏色
-    if (point.type != PointType.CLASSROOM) {
-        return getPointTypeColor(point.type)
-    }
-
-    // 原有基於ID的隨機顏色邏輯保留用於教室
-    val hash = point.id.hashCode()
-    return Color(
-            red = ((hash and 0xFF0000) shr 16) / 255f,
-            green = ((hash and 0x00FF00) shr 8) / 255f,
-            blue = (hash and 0x0000FF) / 255f,
-            alpha = 1f
-    )
-}
-
-data class MapImage(val id: Int, val name: String, val floor: Int = 0)
-
-data class NavigationPath(val points: List<ReferencePoint>, val totalDistance: Double)
-
-class MyCustomImageView(context: Context, attrs: AttributeSet? = null) :
-        TouchImageView(context, attrs) {
-    fun useTransformCoordTouchToBitmap(x: Float, y: Float, clipToBitmap: Boolean): PointF {
-        return transformCoordTouchToBitmap(x, y, clipToBitmap)
-    }
-
-    fun useTransformCoordBitmapToTouch(x: Float, y: Float): PointF {
-        return transformCoordBitmapToTouch(x, y)
-    }
-
-    var isGestureInProgress = false
-    var overlayPoints: List<ReferencePoint> = emptyList()
-    var currentImageId: Int = R.drawable.se1
-    var navigationPath: NavigationPath? = null
-    var startPoint: ReferencePoint? = null
-    var endPoint: ReferencePoint? = null
-    var highlightedPointId: String? = null
-    // 新增：導航時是否隱藏一般點位（僅保留起終點）
-    var hideMarkersWhenNavigating: Boolean = false
-
-    // 修正路徑繪製問題 - 移除多地圖支援的錯誤邏輯
-    fun drawNavigationPath(canvas: Canvas, pathPoints: List<ReferencePoint>) {
-        if (pathPoints.size < 2) return
-
-        val path = Path()
-
-        pathPoints.forEachIndexed { index, point ->
-            val bitmapWidth = drawable.intrinsicWidth.toFloat()
-            val bitmapHeight = drawable.intrinsicHeight.toFloat()
-
-            val pointXOnBitmap = (point.x / 100f * bitmapWidth).toFloat()
-            val pointYOnBitmap = (point.y / 100f * bitmapHeight).toFloat()
-
-            val mappedPoint = useTransformCoordBitmapToTouch(pointXOnBitmap, pointYOnBitmap)
-
-            if (index == 0) {
-                path.moveTo(mappedPoint.x, mappedPoint.y)
-            } else {
-                path.lineTo(mappedPoint.x, mappedPoint.y)
-            }
+    while (open.isNotEmpty()) {
+        val cur = open.poll()
+        if (cur.x == gx && cur.y == gy) {
+            val out = mutableListOf<Node>()
+            var p: Node? = cur
+            while (p != null) { out += p; p = p.parent }
+            return out.asReversed()
         }
-
-        canvas.drawPath(path, routePaint)
-    }
-
-    private val pointPaint =
-            Paint().apply {
-                isAntiAlias = true
-                style = Paint.Style.FILL
-            }
-
-    private val textPaint =
-            Paint().apply {
-                isAntiAlias = true
-                textSize = 30f
-                color = android.graphics.Color.WHITE
-                textAlign = Paint.Align.CENTER
-            }
-
-    private val borderPaint =
-            Paint().apply {
-                isAntiAlias = true
-                style = Paint.Style.STROKE
-                strokeWidth = 3f
-                color = android.graphics.Color.WHITE
-            }
-
-    private val routePaint =
-            Paint().apply {
-                isAntiAlias = true
-                style = Paint.Style.STROKE
-                strokeWidth = 10f
-                color = android.graphics.Color.BLUE
-            }
-
-    private val startEndPaint =
-            Paint().apply {
-                isAntiAlias = true
-                style = Paint.Style.FILL
-                color = android.graphics.Color.RED
-            }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-
-        // 繪製導航路徑
-        navigationPath?.let { path -> drawNavigationPath(canvas, path.points) }
-
-        // 繪製參考點
-        drawReferencePointsOnCanvas(canvas, overlayPoints)
-
-        // 繪製起點和終點
-        startPoint?.let { drawSpecialPoint(canvas, it, android.graphics.Color.GREEN, "S") }
-        endPoint?.let { drawSpecialPoint(canvas, it, android.graphics.Color.RED, "E") }
-    }
-
-    // 移除多地圖相關的函數
-
-    internal fun drawSpecialPoint(
-            canvas: Canvas,
-            point: ReferencePoint,
-            color: Int,
-            label: String
-    ) {
-        val bitmapWidth = drawable.intrinsicWidth.toFloat()
-        val bitmapHeight = drawable.intrinsicHeight.toFloat()
-
-        val pointXOnBitmap = (point.x / 100f * bitmapWidth)
-        val pointYOnBitmap = (point.y / 100f * bitmapHeight)
-
-        val bitmapPoint = PointF(pointXOnBitmap.toFloat(), pointYOnBitmap.toFloat())
-        val mappedPoint = useTransformCoordBitmapToTouch(bitmapPoint.x, bitmapPoint.y)
-
-        startEndPaint.color = color
-
-        // 繪製大圓點
-        canvas.drawCircle(mappedPoint.x, mappedPoint.y, 40f, startEndPaint)
-
-        // 繪製標籤
-        textPaint.textSize = 40f
-        canvas.drawText(label, mappedPoint.x, mappedPoint.y + textPaint.textSize / 3, textPaint)
-    }
-
-    fun drawReferencePointsOnCanvas(canvas: Canvas, points: List<ReferencePoint>) {
-        if (drawable == null) return
-        // 新增：導航時可選擇隱藏點位
-        if (hideMarkersWhenNavigating && navigationPath != null) return
-
-        val bitmapWidth = drawable.intrinsicWidth.toFloat()
-        val bitmapHeight = drawable.intrinsicHeight.toFloat()
-        val shouldDrawSimplified = isGestureInProgress
-
-        points.forEach { point ->
-            val pointXOnBitmap = (point.x / 100f * bitmapWidth)
-            val pointYOnBitmap = (point.y / 100f * bitmapHeight)
-            val bitmapPoint = PointF(pointXOnBitmap.toFloat(), pointYOnBitmap.toFloat())
-            val mappedPoint = useTransformCoordBitmapToTouch(bitmapPoint.x, bitmapPoint.y)
-
-            // 如果是高亮點，繪製不同顏色
-            val isHighlighted = point.id == highlightedPointId
-            val pointColor =
-                    if (isHighlighted) {
-                        android.graphics.Color.YELLOW
-                    } else {
-                        getPointColor(point).toArgb()
-                    }
-
-            pointPaint.color = pointColor
-
-            // 繪製外圓
-            canvas.drawCircle(
-                    mappedPoint.x,
-                    mappedPoint.y,
-                    if (shouldDrawSimplified) 15f else if (isHighlighted) 35f else 30f,
-                    pointPaint
-            )
-
-            if (!shouldDrawSimplified) {
-                // 繪製邊框
-                canvas.drawCircle(
-                        mappedPoint.x,
-                        mappedPoint.y,
-                        if (isHighlighted) 35f else 30f,
-                        borderPaint
-                )
-
-                // 繪製標籤文字
-                canvas.drawText(
-                        point.name.take(1),
-                        mappedPoint.x,
-                        mappedPoint.y + textPaint.textSize / 3,
-                        textPaint
-                )
-
-                // 繪製名稱標籤
-                textPaint.textAlign = Paint.Align.LEFT
-                textPaint.color = pointColor
-                canvas.drawText(point.name, mappedPoint.x + 40f, mappedPoint.y + 10f, textPaint)
-                textPaint.textAlign = Paint.Align.CENTER
-                textPaint.color = android.graphics.Color.WHITE
+        for (nb in neighbors(grid, cur)) {
+            val step = if (nb.x != cur.x && nb.y != cur.y) 1.41421356 else 1.0
+            val tentative = gScore.getOrDefault(key(cur.x, cur.y), Double.POSITIVE_INFINITY) + step
+            val nbKey = key(nb.x, nb.y)
+            if (tentative < gScore.getOrDefault(nbKey, Double.POSITIVE_INFINITY)) {
+                val nnode = Node(nb.x, nb.y, g = tentative, h = heuristic(nb.x, nb.y, gx, gy), parent = cur)
+                gScore[nbKey] = tentative
+                open.add(nnode)
             }
         }
     }
+    return emptyList()
 }
 
-// 計算兩點之間的距離
-fun calculateDistance(point1: ReferencePoint, point2: ReferencePoint): Double {
-    return sqrt((point1.x - point2.x).pow(2) + (point1.y - point2.y).pow(2))
-}
-
-// 新增：計算路線總距離（供自訂路線與對話框使用）
-fun calculateRouteDistance(points: List<ReferencePoint>): Double {
-    if (points.size < 2) return 0.0
-    var total = 0.0
-    for (i in 0 until points.size - 1) {
-        total += calculateDistance(points[i], points[i + 1])
+// ======================= 路徑平滑 =======================
+fun lineOfSight(grid: Grid, ax: Int, ay: Int, bx: Int, by: Int): Boolean {
+    var x0 = ax; var y0 = ay; val x1 = bx; val y1 = by
+    val dx = abs(x1 - x0); val dy = -abs(y1 - y0)
+    val sx = if (x0 < x1) 1 else -1; val sy = if (y0 < y1) 1 else -1
+    var err = dx + dy
+    while (true) {
+        if (!grid.walkable(x0, y0)) return false
+        if (x0 == x1 && y0 == y1) break
+        val e2 = 2 * err
+        if (e2 >= dy) { err += dy; x0 += sx }
+        if (e2 <= dx) { err += dx; y0 += sy }
     }
-    return total
+    return true
 }
 
-// 尋找最近的參考點
-fun findNearestPoint(
-        points: List<ReferencePoint>,
-        x: Double,
-        y: Double,
-        imageId: Int
-): ReferencePoint? {
-    if (points.isEmpty()) return null
-
-    return points.filter { it.imageId == imageId }.minByOrNull {
-        sqrt((it.x - x).pow(2) + (it.y - y).pow(2))
+fun smoothByVisibility(raw: List<Node>, grid: Grid): List<Node> {
+    if (raw.size <= 2) return raw
+    val out = mutableListOf<Node>(); var anchor = 0
+    out += raw.first()
+    var i = 2
+    while (i < raw.size) {
+        val a = raw[anchor]; val b = raw[i]
+        if (!lineOfSight(grid, a.x, a.y, b.x, b.y)) { out += raw[i - 1]; anchor = i - 1 }
+        i++
     }
+    out += raw.last()
+    return out
 }
 
-// 名稱正規化：移除空白與破折號、轉大寫，便於跨來源一致比對
-private fun normalizeName(name: String?): String =
-        (name ?: "").replace(Regex("[\\s\\-]"), "").uppercase()
-
-// 端點是否相同：名稱相同或座標接近即可視為相同（避免不同來源的 id 或 imageId 差異）
-private fun isSameEndpoint(
-        a: ReferencePoint?,
-        b: ReferencePoint?,
-        distanceThreshold: Double = 2.0
-): Boolean {
-    if (a == null || b == null) return false
-    val nameEqual = normalizeName(a.name) == normalizeName(b.name)
-    val close = calculateDistance(a, b) <= distanceThreshold
-    return nameEqual || close
+fun rdp(points: List<Offset>, eps: Float): List<Offset> {
+    if (points.size < 3) return points
+    var index = 0; var dmax = 0f
+    val a = points.first(); val b = points.last()
+    for (i in 1 until points.size - 1) {
+        val d = perpDist(points[i], a, b)
+        if (d > dmax) { index = i; dmax = d }
+    }
+    return if (dmax > eps) {
+        val left = rdp(points.subList(0, index + 1), eps)
+        val right = rdp(points.subList(index, points.size), eps)
+        left.dropLast(1) + right
+    } else listOf(a, b)
 }
 
-// 與編輯器一致的 imageId 映射，避免 JSON/資源 ID 差異造成樓層不一致
-private fun mapImageId(imageId: Int): Int =
-        when (imageId) {
-            R.drawable.se1, 2131165346, 2131165344 -> R.drawable.se1
-            R.drawable.se2, 2131165347, 2131165345 -> R.drawable.se2
-            R.drawable.se3, 2131165348 -> R.drawable.se3
-            R.drawable.sea4, 2131165342 -> R.drawable.sea4
-            R.drawable.sea5, 2131165343 -> R.drawable.sea5
-            else -> R.drawable.se1
+fun perpDist(p: Offset, a: Offset, b: Offset): Float {
+    val num = kotlin.math.abs((b.x - a.x) * (a.y - p.y) - (a.x - p.x) * (b.y - a.y))
+    val den = hypot((b.x - a.x).toDouble(), (b.y - a.y).toDouble()).toFloat()
+    return if (den == 0f) 0f else num / den
+}
+
+// ======================= 影像 -> 可通行網格（只認近白走廊） =======================
+fun bitmapToGridFromWhiteCorridor(
+    bitmap: Bitmap,
+    sample: Int = 2,
+    satMax: Float = 0.12f,   // 放寬以容錯
+    valMin: Float = 0.92f,
+    wallInflate: Int = 3
+): Grid {
+    val w = (bitmap.width / sample).coerceAtLeast(1)
+    val h = (bitmap.height / sample).coerceAtLeast(1)
+    val cells = BooleanArray(w * h) { false }
+
+    fun isNearWhite(px: Int, py: Int): Boolean {
+        if (px !in 0 until bitmap.width || py !in 0 until bitmap.height) return false
+        val c = bitmap.getPixel(px, py)
+        val r = Color.red(c) / 255f
+        val g = Color.green(c) / 255f
+        val b = Color.blue(c) / 255f
+        val maxv = max(r, max(g, b))
+        val minv = min(r, min(g, b))
+        val v = maxv
+        val s = if (maxv == 0f) 0f else (maxv - minv) / maxv
+        return (s <= satMax && v >= valMin)
+    }
+
+    for (gy in 0 until h) for (gx in 0 until w) {
+        val sx = gx * sample; val sy = gy * sample
+        cells[gy * w + gx] = isNearWhite(sx, sy)
+    }
+
+    if (wallInflate > 0) {
+        val out = cells.copyOf()
+        fun block(x: Int, y: Int) { if (x in 0 until w && y in 0 until h) out[y * w + x] = false }
+        for (y in 0 until h) for (x in 0 until w) if (!cells[y * w + x]) {
+            for (dy in -wallInflate..wallInflate) for (dx in -wallInflate..wallInflate) block(x + dx, y + dy)
         }
-
-// 備援：沒有自定義路線時，回傳直線（原本的 findPath 修正掉 context 問題）
-fun findPath(
-        points: List<ReferencePoint>,
-        start: ReferencePoint,
-        end: ReferencePoint
-): NavigationPath {
-    return NavigationPath(listOf(start, end), calculateDistance(start, end))
-}
-
-// 走廊向量定義
-data class CorridorVector(
-        val id: String,
-        val floor: Int,
-        val startX: Double,
-        val startY: Double,
-        val endX: Double,
-        val endY: Double,
-        val connectedCorridorIds: List<String> = emptyList(),
-        val label: String = ""
-) {
-    // 轉換為ReferencePoint，方便顯示
-    fun toReferencePoint(): ReferencePoint {
-        val midX = (startX + endX) / 2
-        val midY = (startY + endY) / 2
-        val imageId =
-                when (floor) {
-                    1 -> R.drawable.se1
-                    2 -> R.drawable.se2
-                    3 -> R.drawable.se3
-                    4 -> R.drawable.sea4
-                    5 -> R.drawable.sea5
-                    else -> R.drawable.se1
-                }
-        return ReferencePoint.createSimplePoint(
-                name = label.ifEmpty { "走廊-$id" },
-                x = midX,
-                y = midY,
-                imageId = imageId,
-                type = PointType.CORRIDOR
-        )
+        return Grid(w, h, out)
     }
+    return Grid(w, h, cells)
 }
 
-// 區域連通性定義
-data class AreaConnectivity(
-        val floor: Int,
-        val areaStartX: Double,
-        val areaStartY: Double,
-        val areaEndX: Double,
-        val areaEndY: Double,
-        val connectedCorridorIds: List<String>
-) {
-    // 判斷某點是否在這個區域內
-    fun containsPoint(x: Double, y: Double): Boolean {
-        return x >= areaStartX && x <= areaEndX && y >= areaStartY && y <= areaEndY
-    }
-}
-
-// 為點位添加額外的走廊和區域資訊
-fun enrichReferencePointsWithCorridorsAndAreas(
-        points: List<ReferencePoint>,
-        corridors: List<CorridorVector>,
-        areas: List<AreaConnectivity>
-): List<ReferencePoint> {
-    val enrichedPoints = points.toMutableList()
-
-    // 為每個參考點添加可通行的走廊ID
-    enrichedPoints.forEach { point ->
-        val connectedCorridors =
-                findConnectedCorridors(point.x, point.y, getFloorFromImageId(point.imageId), areas)
-        point.connectedCorridorIds = connectedCorridors
-    }
-
-    return enrichedPoints
-}
-
-// 新增：根據座標找到所屬區域可連通的走廊ID
-fun findConnectedCorridors(
-        x: Double,
-        y: Double,
-        floor: Int,
-        areas: List<AreaConnectivity>
-): List<String> {
-    return areas
-            .filter { it.floor == floor && it.containsPoint(x, y) }
-            .flatMap { it.connectedCorridorIds }
-            .distinct()
-}
-
-// 新增：檢查兩點間是否可通行（通過走廊連接）
-fun canNavigateBetween(
-        point1: ReferencePoint,
-        point2: ReferencePoint,
-        areas: List<AreaConnectivity>,
-        corridors: List<CorridorVector>
-): Boolean {
-    // 獲取兩點可連通的走廊ID
-    val corridors1 =
-            findConnectedCorridors(point1.x, point1.y, getFloorFromImageId(point1.imageId), areas)
-    val corridors2 =
-            findConnectedCorridors(point2.x, point2.y, getFloorFromImageId(point2.imageId), areas)
-
-    // 如果兩點都不能連通到走廊，則不可通行
-    if (corridors1.isEmpty() || corridors2.isEmpty()) return false
-
-    // 構建走廊連通性圖
-    val graph = mutableMapOf<String, Set<String>>()
-    corridors.forEach { corridor -> graph[corridor.id] = corridor.connectedCorridorIds.toSet() }
-
-    // 使用BFS檢查是否存在從corridors1中任一走廊到corridors2中任一走廊的路徑
-    for (start in corridors1) {
-        val visited = mutableSetOf<String>()
-        val queue = ArrayDeque<String>()
-        queue.add(start)
-        visited.add(start)
-
-        while (queue.isNotEmpty()) {
-            val current = queue.removeFirst()
-
-            // 如果當前走廊是目標之一，則找到路徑
-            if (current in corridors2) return true
-
-            // 檢查所有連通的走廊
-            val neighbors = graph[current] ?: emptySet()
-            for (neighbor in neighbors) {
-                if (neighbor !in visited) {
-                    visited.add(neighbor)
-                    queue.add(neighbor)
-                }
-            }
+// ======================= 將 Grid 轉成覆蓋圖 =======================
+suspend fun buildGridOverlayBitmap(g: Grid): ImageBitmap = withContext(Dispatchers.Default) {
+    val bmp = Bitmap.createBitmap(g.w, g.h, Bitmap.Config.ARGB_8888)
+    val blocked = android.graphics.Color.argb(20, 0, 0, 0)       // 淡灰（不可走）
+    val walkable = android.graphics.Color.argb(110, 0, 180, 255) // 半透明藍綠（可走）
+    var idx = 0
+    for (y in 0 until g.h) {
+        for (x in 0 until g.w) {
+            bmp.setPixel(x, y, if (g.cells[idx]) walkable else blocked)
+            idx++
         }
     }
-
-    return false
+    bmp.asImageBitmap()
 }
 
-// 重新命名的輔助函數：從imageId獲取樓層
-fun getFloorFromImageId(imageId: Int): Int {
-    return when (imageId) {
-        R.drawable.se1 -> 1
-        R.drawable.se2 -> 2
-        R.drawable.se3 -> 3
-        R.drawable.sea4 -> 4
-        R.drawable.sea5 -> 5
-        else -> 1
-    }
-}
-
-// 新增：ViewModel 來管理資料庫操作
-class IndoorMapViewModel(application: android.app.Application) : AndroidViewModel(application) {
-    private val repository = IndoorMapRepository(application)
-
-    private val _allReferencePoints = MutableStateFlow<List<ReferencePoint>>(emptyList())
-    val allReferencePoints: StateFlow<List<ReferencePoint>> = _allReferencePoints.asStateFlow()
-
-    private val _isLoading = MutableStateFlow(false)
-    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
-
-    private val _errorMessage = MutableStateFlow<String?>(null)
-    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
-
-    init {
-        loadAllReferencePoints()
-    }
-
-    private fun loadAllReferencePoints() {
-        viewModelScope.launch {
-            try {
-                _isLoading.value = true
-                _errorMessage.value = null
-
-                repository.getAllReferencePoints().collect { points ->
-                    _allReferencePoints.value = points
-                    _isLoading.value = false
-                }
-            } catch (e: Exception) {
-                Log.e("IndoorMapViewModel", "載入參考點資料時發生錯誤", e)
-                _errorMessage.value = "載入參考點資料時發生錯誤: ${e.message}"
-                _isLoading.value = false
-            }
-        }
-    }
-
-    fun getReferencePointsByImageId(imageId: Int): Flow<List<ReferencePoint>> {
-        return repository.getReferencePointsByImageId(imageId)
-    }
-
-    fun searchReferencePointsByName(query: String): Flow<List<ReferencePoint>> {
-        return repository.searchReferencePointsByName(query)
-    }
-
-    suspend fun addReferencePoint(point: ReferencePoint, buildingId: String = "SE") {
-        val floorId =
-                when (point.imageId) {
-                    R.drawable.se1 -> 1
-                    R.drawable.se2 -> 2
-                    R.drawable.se3 -> 3
-                    R.drawable.sea4 -> 4
-                    R.drawable.sea5 -> 5
-                    else -> 1
-                }
-        repository.addReferencePoint(point, buildingId, floorId)
-    }
-
-    suspend fun deleteReferencePoint(pointId: String) {
-        repository.deleteReferencePoint(pointId)
-    }
-
-    fun refreshData() {
-        loadAllReferencePoints()
-    }
-}
-
+// ======================= 主畫面 =======================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun IndoorMapScreen(initialDestination: String? = null) {
+fun IndoorMapScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val viewModel: IndoorMapViewModel = viewModel()
-
-    // 修改：恢復使用 ViewModel
-    val allReferencePoints by viewModel.allReferencePoints.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
-    val errorMessage by viewModel.errorMessage.collectAsState()
-
-    // 新增缺少的狀態變數
-    var imageSize by remember { mutableStateOf(IntSize.Zero) }
-    val touchImageViewRef = remember { mutableStateOf<TouchImageView?>(null) }
-    val customImageViewRef = remember { mutableStateOf<MyCustomImageView?>(null) }
-
-    // 室內自定義路線狀態
-    var availableCustomRoutes by remember { mutableStateOf<List<IndoorCustomRoute>>(emptyList()) }
-    var selectedCustomRoute by remember { mutableStateOf<IndoorCustomRoute?>(null) }
-    var showCustomRoutesDialog by remember { mutableStateOf(false) }
-
-    // 搜索和導航狀態
-    var isSearchExpanded by remember { mutableStateOf(false) }
-    var searchSuggestions by remember { mutableStateOf<List<ReferencePoint>>(emptyList()) }
-    var showStartSuggestions by remember { mutableStateOf(false) }
-    var showDestinationSuggestions by remember { mutableStateOf(false) }
-
-    var startQuery by remember { mutableStateOf("") }
-    var destinationQuery by remember { mutableStateOf("") }
-    var startPoint by remember { mutableStateOf<ReferencePoint?>(null) }
-    var endPoint by remember { mutableStateOf<ReferencePoint?>(null) }
-    var navigationPath by remember { mutableStateOf<NavigationPath?>(null) }
-    var highlightedPointId by remember { mutableStateOf<String?>(null) }
-
-    var currentImageId by remember { mutableStateOf(R.drawable.se1) }
-    var selectedFloor by remember { mutableStateOf(1) }
-
-    var showCorridors by remember { mutableStateOf(false) }
-    var showAreas by remember { mutableStateOf(false) }
-
-    val snackbarHostState = remember { SnackbarHostState() }
+    val colorMaterial = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
-    val focusManager = LocalFocusManager.current
 
-    // 預設理工學院入口參考點
-    val defaultStartPoint = remember {
-        ReferencePoint.createSimplePoint(
-                name = "理工學院入口",
-                x = 36.21,
-                y = 68.26,
-                imageId = R.drawable.se1,
-                scanCount = 0,
-                type = PointType.ENTRANCE
-        )
-    }
+    val floorPlans = listOf(
+        "一樓平面圖" to R.drawable.se1,
+        "二樓平面圖" to R.drawable.se2,
+        "三樓平面圖" to R.drawable.se3,
+    )
 
-    // 修改：簡化載入邏輯，使用資料庫
-    LaunchedEffect(allReferencePoints) {
-        try {
-            // 載入室內自定義路線
-            availableCustomRoutes = IndoorRouteManager.getAllRoutes(context)
+    var expanded by remember { mutableStateOf(false) }
+    var selectedFloorName by remember { mutableStateOf(floorPlans.first().first) }
+    var currentImageRes by remember { mutableStateOf(floorPlans.first().second) }
+    var imageBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
 
-            if (allReferencePoints.isNotEmpty()) {
-                // 確保預設起點存在於資料庫中
-                val hasDefaultStart =
-                        allReferencePoints.any {
-                            it.name == defaultStartPoint.name && it.type == PointType.ENTRANCE
-                        }
+    // ===== (2) 載入時先縮圖（依裝置寬高上限） =====
+    LaunchedEffect(currentImageRes) {
+        val d = context.getDrawable(currentImageRes) ?: return@LaunchedEffect
+        val raw = d.toBitmap()
 
-                if (!hasDefaultStart) {
-                    // 添加預設入口點到資料庫
-                    viewModel.addReferencePoint(defaultStartPoint)
-                }
+        val metrics = Resources.getSystem().displayMetrics
+        val maxW = (metrics.widthPixels * 2f).toInt()
+        val maxH = (metrics.heightPixels * 2f).toInt()
 
-                // 設定預設起點
-                val startPointToUse =
-                        allReferencePoints.find {
-                            it.name == defaultStartPoint.name && it.type == PointType.ENTRANCE
-                        }
-                                ?: defaultStartPoint
-
-                startPoint = startPointToUse
-                startQuery = startPointToUse.name
-
-                // 處理初始目的地
-                if (!initialDestination.isNullOrEmpty()) {
-                    val dest =
-                            allReferencePoints.firstOrNull { p ->
-                                normalizeName(p.name).contains(normalizeName(initialDestination))
-                            }
-                    if (dest != null) {
-                        endPoint = dest
-                        destinationQuery = dest.name
-                        // 自動規劃路線
-                        planRoute(
-                                startPoint,
-                                endPoint,
-                                availableCustomRoutes,
-                                scope,
-                                snackbarHostState
-                        ) { path, route ->
-                            navigationPath = path
-                            selectedCustomRoute = route
-                            customImageViewRef.value?.apply {
-                                startPoint = startPoint
-                                endPoint = endPoint
-                                navigationPath = path
-                                invalidate()
-                            }
-                        }
-                    } else {
-                        destinationQuery = initialDestination
-                        isSearchExpanded = true
-                        scope.launch {
-                            snackbarHostState.showSnackbar("未找到 $initialDestination，請手動搜尋")
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("IndoorMapScreen", "處理初始化時出錯", e)
-            scope.launch { snackbarHostState.showSnackbar("初始化失敗：${e.message}") }
-        }
-    }
-
-    // 載入狀態顯示
-    if (isLoading) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator()
-                Spacer(modifier = Modifier.height(16.dp))
-                Text("載入室內地圖資料...")
-            }
-        }
-        return
-    }
-
-    // 錯誤訊息顯示
-    if (errorMessage != null) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                        text = "載入失敗",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.error
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(text = errorMessage!!, style = MaterialTheme.typography.bodyMedium)
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(onClick = { viewModel.refreshData() }) { Text("重試") }
-            }
-        }
-        return
-    }
-
-    // 如果沒有資料，顯示初始化提示
-    if (allReferencePoints.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(text = "尚無參考點資料", style = MaterialTheme.typography.titleMedium)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(text = "請先在路線編輯器中添加參考點", style = MaterialTheme.typography.bodyMedium)
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(
-                        onClick = {
-                            // 可以導航到編輯器或初始化預設資料
-                            scope.launch {
-                                try {
-                                    // 添加一些基本的參考點
-                                    viewModel.addReferencePoint(defaultStartPoint)
-                                    snackbarHostState.showSnackbar("已添加預設入口點")
-                                } catch (e: Exception) {
-                                    snackbarHostState.showSnackbar("添加失敗：${e.message}")
-                                }
-                            }
-                        }
-                ) { Text("添加預設入口點") }
-            }
-        }
-        return
-    }
-
-    // 搜尋建議函數
-    fun updateStartSearchSuggestions(query: String) {
-        if (query.length >= 1) {
-            searchSuggestions =
-                    allReferencePoints
-                            .filter { point -> point.name.contains(query, ignoreCase = true) }
-                            .take(5)
-            showStartSuggestions = searchSuggestions.isNotEmpty()
-        } else {
-            showStartSuggestions = false
-        }
-    }
-
-    fun updateDestinationSearchSuggestions(query: String) {
-        if (query.length >= 1) {
-            searchSuggestions =
-                    allReferencePoints
-                            .filter { point -> point.name.contains(query, ignoreCase = true) }
-                            .take(5)
-            showDestinationSuggestions = searchSuggestions.isNotEmpty()
-        } else {
-            showDestinationSuggestions = false
-        }
-    }
-
-    // 搜索起點
-    fun searchStart() {
-        if (startQuery == defaultStartPoint.name) {
-            scope.launch { snackbarHostState.showSnackbar("已使用理工學院入口作為起點") }
-            return
-        }
-
-        val start =
-                allReferencePoints.firstOrNull { point ->
-                    point.name.contains(startQuery, ignoreCase = true)
-                }
-        if (start != null) {
-            startPoint = start
-            highlightedPointId = start.id
-            customImageViewRef.value?.highlightedPointId = start.id
-            customImageViewRef.value?.startPoint = start
-            customImageViewRef.value?.invalidate()
-
-            scope.launch { snackbarHostState.showSnackbar("起點設定為: ${start.name}") }
-        } else {
-            scope.launch { snackbarHostState.showSnackbar("未找到起點: $startQuery") }
-        }
-    }
-
-    // 搜索目的地
-    fun searchDestination() {
-        val destination =
-                allReferencePoints.firstOrNull { point ->
-                    point.name.contains(destinationQuery, ignoreCase = true)
-                }
-        if (destination != null) {
-            endPoint = destination
-            scope.launch { snackbarHostState.showSnackbar("終點設定為: ${destination.name}") }
-        } else {
-            scope.launch { snackbarHostState.showSnackbar("未找到目的地: $destinationQuery") }
-        }
-    }
-
-    // 規劃路線
-    fun planRoute() {
-        planRoute(startPoint, endPoint, availableCustomRoutes, scope, snackbarHostState) {
-                path,
-                route ->
-            navigationPath = path
-            selectedCustomRoute = route
-            customImageViewRef.value?.apply {
-                startPoint = startPoint
-                endPoint = endPoint
-                navigationPath = path
-                invalidate()
-            }
-        }
-    }
-
-    // 對調起點和終點
-    fun swapStartAndEnd() {
-        val tempPoint = startPoint
-        val tempQuery = startQuery
-
-        startPoint = endPoint
-        startQuery = destinationQuery
-
-        endPoint = tempPoint
-        destinationQuery = tempQuery
-
-        customImageViewRef.value?.startPoint = startPoint
-        customImageViewRef.value?.endPoint = endPoint
-
-        if (startPoint != null && endPoint != null) {
-            planRoute()
-        } else {
-            customImageViewRef.value?.invalidate()
-        }
-
-        scope.launch { snackbarHostState.showSnackbar("起點和終點已對調") }
-    }
-
-    // 重置搜索
-    fun resetSearch() {
-        startQuery = ""
-        destinationQuery = ""
-        startPoint = null
-        endPoint = null
-        navigationPath = null
-        highlightedPointId = null
-        showStartSuggestions = false
-        showDestinationSuggestions = false
-        customImageViewRef.value?.startPoint = null
-        customImageViewRef.value?.endPoint = null
-        customImageViewRef.value?.navigationPath = null
-        customImageViewRef.value?.highlightedPointId = null
-        customImageViewRef.value?.invalidate()
-    }
-
-    // 主界面
-    Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { paddingValues ->
-        Column(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
-            // 添加走廊控制按鈕
-            Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Button(
-                        onClick = { showCorridors = !showCorridors },
-                        colors =
-                                ButtonDefaults.buttonColors(
-                                        containerColor =
-                                                if (showCorridors) MaterialTheme.colorScheme.primary
-                                                else
-                                                        MaterialTheme.colorScheme.secondary.copy(
-                                                                alpha = 0.6f
-                                                        )
-                                )
-                ) { Text(if (showCorridors) "隱藏走廊向量" else "顯示走廊向量") }
-
-                Button(
-                        onClick = { showAreas = !showAreas },
-                        colors =
-                                ButtonDefaults.buttonColors(
-                                        containerColor =
-                                                if (showAreas) MaterialTheme.colorScheme.primary
-                                                else
-                                                        MaterialTheme.colorScheme.secondary.copy(
-                                                                alpha = 0.6f
-                                                        )
-                                )
-                ) { Text(if (showAreas) "隱藏連通區域" else "顯示連通區域") }
-            }
-
-            // 樓層選擇列
-            Row(
-                    modifier =
-                            Modifier.fillMaxWidth()
-                                    .padding(8.dp)
-                                    .background(
-                                            MaterialTheme.colorScheme.surfaceVariant,
-                                            RoundedCornerShape(8.dp)
-                                    )
-                                    .padding(4.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                for (floor in 1..5) {
-                    Button(
-                            onClick = {
-                                selectedFloor = floor
-                                currentImageId =
-                                        when (floor) {
-                                            1 -> R.drawable.se1
-                                            2 -> R.drawable.se2
-                                            3 -> R.drawable.se3
-                                            4 -> R.drawable.sea4
-                                            5 -> R.drawable.sea5
-                                            else -> R.drawable.se1
-                                        }
-                            },
-                            modifier = Modifier.padding(horizontal = 4.dp),
-                            colors =
-                                    ButtonDefaults.buttonColors(
-                                            containerColor =
-                                                    if (selectedFloor == floor)
-                                                            MaterialTheme.colorScheme.primary
-                                                    else MaterialTheme.colorScheme.surfaceVariant
-                                    )
-                    ) { Text("${floor}F") }
-                }
-            }
-
-            // 新增：顯示當前位置資訊
-            if (startPoint == defaultStartPoint) {
-                Card(
-                        modifier =
-                                Modifier.fillMaxWidth()
-                                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                        colors =
-                                CardDefaults.cardColors(
-                                        containerColor = Color.Green.copy(alpha = 0.1f)
-                                )
-                ) {
-                    Row(
-                            modifier = Modifier.padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                                imageVector = Icons.Default.LocationOn,
-                                contentDescription = null,
-                                tint = Color.Green
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                                text = "當前位置：理工學院入口 (1樓)",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.Green
-                        )
-                    }
-                }
-            }
-
-            // 可收起的搜索區域
-            Card(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    // 展開/收起按鈕
-                    Row(
-                            modifier =
-                                    Modifier.fillMaxWidth().clickable {
-                                        isSearchExpanded = !isSearchExpanded
-                                    },
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(text = "路線規劃", style = MaterialTheme.typography.titleMedium)
-                        Icon(
-                                imageVector =
-                                        if (isSearchExpanded) Icons.Default.ExpandLess
-                                        else Icons.Default.ExpandMore,
-                                contentDescription = if (isSearchExpanded) "收起" else "展開"
-                        )
-                    }
-
-                    // 展開的搜索內容
-                    AnimatedVisibility(
-                            visible = isSearchExpanded,
-                            enter = expandVertically() + fadeIn(),
-                            exit = shrinkVertically() + fadeOut()
-                    ) {
-                        Column {
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            // 起點搜索
-                            OutlinedTextField(
-                                    value = startQuery,
-                                    onValueChange = {
-                                        startQuery = it
-                                        updateStartSearchSuggestions(it)
-                                        showDestinationSuggestions = false
-                                    },
-                                    label = { Text("輸入起點") },
-                                    placeholder = { Text("例如: 大門") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    leadingIcon = {
-                                        Icon(
-                                                imageVector = Icons.Default.LocationOn,
-                                                contentDescription = null,
-                                                tint = Color.Green
-                                        )
-                                    },
-                                    trailingIcon = {
-                                        Button(
-                                                onClick = {
-                                                    focusManager.clearFocus()
-                                                    searchStart()
-                                                    showStartSuggestions = false
-                                                },
-                                                enabled = startQuery.isNotEmpty()
-                                        ) { Text("設定起點") }
-                                    },
-                                    singleLine = true,
-                                    keyboardOptions =
-                                            KeyboardOptions.Default.copy(
-                                                    imeAction = ImeAction.Search
-                                            ),
-                                    keyboardActions =
-                                            KeyboardActions(
-                                                    onSearch = {
-                                                        focusManager.clearFocus()
-                                                        if (startQuery.isNotEmpty()) {
-                                                            searchStart()
-                                                            showStartSuggestions = false
-                                                        }
-                                                    }
-                                            )
-                            )
-
-                            // 起點搜尋建議
-                            AnimatedVisibility(visible = showStartSuggestions) {
-                                Card(
-                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                                        colors =
-                                                CardDefaults.cardColors(
-                                                        containerColor =
-                                                                MaterialTheme.colorScheme
-                                                                        .surfaceVariant
-                                                )
-                                ) {
-                                    LazyColumn(modifier = Modifier.height(200.dp)) {
-                                        items(searchSuggestions) { point ->
-                                            Text(
-                                                    text = point.name,
-                                                    modifier =
-                                                            Modifier.fillMaxWidth()
-                                                                    .clickable {
-                                                                        startQuery = point.name
-                                                                        showStartSuggestions = false
-                                                                        focusManager.clearFocus()
-                                                                        searchStart()
-                                                                    }
-                                                                    .padding(12.dp),
-                                                    style = MaterialTheme.typography.bodyMedium
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            // 終點搜索
-                            OutlinedTextField(
-                                    value = destinationQuery,
-                                    onValueChange = {
-                                        destinationQuery = it
-                                        updateDestinationSearchSuggestions(it)
-                                        showStartSuggestions = false
-                                    },
-                                    label = { Text("輸入目的地") },
-                                    placeholder = { Text("例如: sec101") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    leadingIcon = {
-                                        Icon(
-                                                imageVector = Icons.Default.LocationOn,
-                                                contentDescription = null,
-                                                tint = Color.Red
-                                        )
-                                    },
-                                    trailingIcon = {
-                                        Button(
-                                                onClick = {
-                                                    focusManager.clearFocus()
-                                                    searchDestination()
-                                                    showDestinationSuggestions = false
-                                                },
-                                                enabled = destinationQuery.isNotEmpty()
-                                        ) { Text("設定終點") }
-                                    },
-                                    singleLine = true,
-                                    keyboardOptions =
-                                            KeyboardOptions.Default.copy(
-                                                    imeAction = ImeAction.Search
-                                            ),
-                                    keyboardActions =
-                                            KeyboardActions(
-                                                    onSearch = {
-                                                        focusManager.clearFocus()
-                                                        if (destinationQuery.isNotEmpty()) {
-                                                            searchDestination()
-                                                            showDestinationSuggestions = false
-                                                        }
-                                                    }
-                                            )
-                            )
-                        }
-
-                        // 終點搜尋建議
-                        AnimatedVisibility(visible = showDestinationSuggestions) {
-                            Card(
-                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                                    colors =
-                                            CardDefaults.cardColors(
-                                                    containerColor =
-                                                            MaterialTheme.colorScheme.surfaceVariant
-                                            )
-                            ) {
-                                LazyColumn(modifier = Modifier.height(200.dp)) {
-                                    items(searchSuggestions) { point ->
-                                        Text(
-                                                text = point.name,
-                                                modifier =
-                                                        Modifier.fillMaxWidth()
-                                                                .clickable {
-                                                                    destinationQuery = point.name
-                                                                    showDestinationSuggestions =
-                                                                            false
-                                                                    focusManager.clearFocus()
-                                                                    searchDestination()
-                                                                }
-                                                                .padding(12.dp),
-                                                style = MaterialTheme.typography.bodyMedium
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // 控制按鈕區域
-                        Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            // 規劃路線按鈕
-                            Button(
-                                    onClick = { planRoute() },
-                                    enabled = startPoint != null && endPoint != null,
-                                    modifier = Modifier.weight(1f)
-                            ) { Text("規劃路線") }
-
-                            // 對調按鈕
-                            IconButton(
-                                    onClick = { swapStartAndEnd() },
-                                    enabled = startPoint != null || endPoint != null
-                            ) {
-                                Icon(
-                                        imageVector = Icons.Default.SwapVert,
-                                        contentDescription = "對調起點終點",
-                                        tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-
-                            // 清除按鈕
-                            IconButton(onClick = { resetSearch() }) {
-                                Icon(
-                                        imageVector = Icons.Default.Clear,
-                                        contentDescription = "清除全部",
-                                        tint = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
-
-                        // 顯示當前設定的起點和終點
-                        if (startPoint != null || endPoint != null) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                if (startPoint != null) {
-                                    Surface(
-                                            color = Color.Green.copy(alpha = 0.1f),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text(
-                                                text = "起點: ${startPoint!!.name}",
-                                                modifier = Modifier.padding(8.dp),
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = Color.Green
-                                        )
-                                    }
-                                }
-                                if (endPoint != null) {
-                                    Surface(
-                                            color = Color.Red.copy(alpha = 0.1f),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text(
-                                                text = "目的地: ${endPoint!!.name}",
-                                                modifier = Modifier.padding(8.dp),
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = Color.Red
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 地圖部分
-            Box(
-                    modifier =
-                            Modifier.weight(1f)
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                AndroidView(
-                        factory = { ctx ->
-                            MyCustomImageView(ctx).apply {
-                                setLayerType(View.LAYER_TYPE_HARDWARE, null)
-                                customImageViewRef.value = this
-                                setImageResource(currentImageId)
-                                maxZoom = 8f
-                                minZoom = 0.5f
-                                isZoomEnabled = true
-                                setScaleType(android.widget.ImageView.ScaleType.MATRIX)
-
-                                setOnTouchImageViewListener(
-                                        object : OnTouchImageViewListener {
-                                            private var lastCallTime = 0L
-
-                                            override fun onMove() {
-                                                val currentTime = System.currentTimeMillis()
-                                                if (currentTime - lastCallTime > 16) {
-                                                    postInvalidateOnAnimation()
-                                                    lastCallTime = currentTime
-                                                }
-                                            }
-                                        }
-                                )
-                            }
-                        },
-                        update = { view ->
-                            (view as? MyCustomImageView)?.let { mv ->
-                                // 修正：確保切換樓層時更新圖片
-                                mv.setImageResource(currentImageId)
-
-                                val currentMapPoints =
-                                        allReferencePoints.filter { it.imageId == currentImageId }
-                                mv.overlayPoints = currentMapPoints
-                                mv.currentImageId = currentImageId
-                                mv.navigationPath = navigationPath
-                                mv.startPoint = startPoint
-                                mv.endPoint = endPoint
-                                mv.highlightedPointId = highlightedPointId
-                                mv.hideMarkersWhenNavigating = true
-                                mv.invalidate()
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize()
-                )
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-    }
-
-    // 新增：自定義路線選擇對話框
-    if (showCustomRoutesDialog) {
-        AlertDialog(
-                onDismissRequest = { showCustomRoutesDialog = false },
-                title = { Text("選擇自定義室內路線") },
-                text = {
-                    if (availableCustomRoutes.isEmpty()) {
-                        Text("沒有可用的自定義路線，請先在路線編輯器中創建")
-                    } else {
-                        LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
-                            items(availableCustomRoutes) { route ->
-                                Card(
-                                        modifier =
-                                                Modifier.fillMaxWidth()
-                                                        .padding(vertical = 4.dp)
-                                                        .clickable {
-                                                            // 選擇此路線
-                                                            if (route.points.size >= 2) {
-                                                                startPoint = route.points.first()
-                                                                startQuery =
-                                                                        route.points.first().name
-
-                                                                endPoint = route.points.last()
-                                                                destinationQuery =
-                                                                        route.points.last().name
-
-                                                                // 設定路線
-                                                                navigationPath =
-                                                                        NavigationPath(
-                                                                                points =
-                                                                                        route.points,
-                                                                                totalDistance =
-                                                                                        calculateRouteDistance(
-                                                                                                route.points
-                                                                                        ) // 修正：使用新增函數
-                                                                        )
-
-                                                                selectedCustomRoute = route
-
-                                                                // 更新地圖
-                                                                customImageViewRef
-                                                                        .value
-                                                                        ?.startPoint = startPoint
-                                                                customImageViewRef.value?.endPoint =
-                                                                        endPoint
-                                                                customImageViewRef
-                                                                        .value
-                                                                        ?.navigationPath =
-                                                                        navigationPath
-                                                                customImageViewRef.value
-                                                                        ?.invalidate()
-
-                                                                // 切換到正確的樓層
-                                                                val firstPoint =
-                                                                        route.points.firstOrNull()
-                                                                if (firstPoint != null) {
-                                                                    currentImageId =
-                                                                            firstPoint.imageId
-                                                                }
-
-                                                                showCustomRoutesDialog = false
-
-                                                                scope.launch {
-                                                                    snackbarHostState.showSnackbar(
-                                                                            "已選擇自定義路線: ${route.name}"
-                                                                    )
-                                                                }
-                                                            } else {
-                                                                scope.launch {
-                                                                    snackbarHostState.showSnackbar(
-                                                                            "此路線點數不足，無法使用"
-                                                                    )
-                                                                }
-                                                            }
-                                                        },
-                                        colors =
-                                                CardDefaults.cardColors(
-                                                        containerColor =
-                                                                MaterialTheme.colorScheme
-                                                                        .surfaceVariant
-                                                )
-                                ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Text(
-                                                text = route.name,
-                                                style = MaterialTheme.typography.titleMedium
-                                        )
-
-                                        Spacer(modifier = Modifier.height(4.dp))
-
-                                        Text(
-                                                text =
-                                                        if (route.description.isNotEmpty())
-                                                                route.description
-                                                        else
-                                                                "從 ${route.points.firstOrNull()?.name ?: "未知"} 到 ${route.points.lastOrNull()?.name ?: "未知"}",
-                                                style = MaterialTheme.typography.bodySmall
-                                        )
-
-                                        Spacer(modifier = Modifier.height(4.dp))
-
-                                        Text(
-                                                text =
-                                                        "${route.points.size} 個點 | 預計 ${route.estimatedTimeInMinutes} 分鐘",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = Color.Gray
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { showCustomRoutesDialog = false }) { Text("關閉") }
-                }
-        )
-    }
-}
-// 可用地圖資源
-object AvailableMapImages {
-    val maps =
-            listOf(
-                    MapImage(R.drawable.se1, "綜合教學大樓 1F", 1),
-                    MapImage(R.drawable.se2, "綜合教學大樓 2F", 2),
-                    MapImage(R.drawable.se3, "綜合教學大樓 3F", 3),
-                    MapImage(R.drawable.sea4, "綜合教學大樓 4F", 4),
-                    MapImage(R.drawable.sea5, "綜合教學大樓 5F", 5)
+        val scale = min(maxW / raw.width.toFloat(), maxH / raw.height.toFloat())
+        val finalBmp = if (scale < 1f) {
+            Bitmap.createScaledBitmap(
+                raw,
+                (raw.width * scale).toInt().coerceAtLeast(1),
+                (raw.height * scale).toInt().coerceAtLeast(1),
+                true
             )
-}
+        } else raw
 
-// ReferencePointDatabase 簡化實現
-object ReferencePointDatabase {
-    val availableMapImages = AvailableMapImages.maps
-
-    private var instance: ReferencePointDatabaseImpl? = null
-
-    fun getInstance(context: Context): ReferencePointDatabaseImpl {
-        if (instance == null) {
-            instance = ReferencePointDatabaseImpl(context)
-        }
-        return instance!!
+        imageBitmap = finalBmp.asImageBitmap()
     }
 
-    class ReferencePointDatabaseImpl(private val context: Context) {
-        private val sharedPreferences =
-                context.getSharedPreferences("reference_points", Context.MODE_PRIVATE)
-        var referencePoints: List<ReferencePoint> = emptyList()
-
-        suspend fun addReferencePoint(point: ReferencePoint) {
-            referencePoints = referencePoints + point
-        }
-
-        suspend fun deleteReferencePoint(id: String) {
-            referencePoints = referencePoints.filter { it.id != id }
+    // 視窗互動狀態
+    var scale by remember { mutableStateOf(1f) }
+    var offsetX by remember { mutableStateOf(0f) }
+    var offsetY by remember { mutableStateOf(0f) }
+    val transformState = remember {
+        TransformableState { zoom, pan, _ ->
+            scale = (scale * zoom).coerceIn(0.5f, 6f)
+            offsetX += pan.x; offsetY += pan.y
         }
     }
-}
 
-// 新增：預覽畫面
-@Preview(showBackground = true, widthDp = 360, heightDp = 640)
-@Composable
-fun IndoorMapScreenPreview() {
-    MaterialTheme { IndoorMapScreen() }
-}
+    // 導航狀態
+    var grid by remember { mutableStateOf<Grid?>(null) }
+    var gridSample by remember { mutableStateOf(2) } // 2 或 3
+    var start by remember { mutableStateOf<Offset?>(null) }
+    var goal by remember { mutableStateOf<Offset?>(null) }
+    var path by remember { mutableStateOf<List<Offset>>(emptyList()) }
+    var showGridOverlay by remember { mutableStateOf(false) }
 
-// 新增：預覽畫面 - 帶有初始目的地
-@Preview(showBackground = true, widthDp = 360, heightDp = 640, name = "With Destination")
-@Composable
-fun IndoorMapScreenWithDestinationPreview() {
-    MaterialTheme { IndoorMapScreen(initialDestination = "sec101") }
-}
+    // 覆蓋圖 & 偵錯
+    var overlay by remember { mutableStateOf<ImageBitmap?>(null) }
+    var walkableCount by remember { mutableStateOf(0) }
 
-// 新增：預覽畫面 - 深色模式
-@Preview(
-        showBackground = true,
-        widthDp = 360,
-        heightDp = 640,
-        uiMode = android.content.res.Configuration.UI_MODE_NIGHT_YES
-)
-@Composable
-fun IndoorMapScreenDarkPreview() {
-    MaterialTheme { IndoorMapScreen() }
-}
-
-// 新增：預覽畫面 - 平板尺寸
-@Preview(showBackground = true, widthDp = 800, heightDp = 1200, name = "Tablet")
-@Composable
-fun IndoorMapScreenTabletPreview() {
-    MaterialTheme { IndoorMapScreen() }
-}
-
-// 新增：統一的路線規劃函數
-private fun planRoute(
-        startPoint: ReferencePoint?,
-        endPoint: ReferencePoint?,
-        availableCustomRoutes: List<IndoorCustomRoute>,
-        scope: kotlinx.coroutines.CoroutineScope,
-        snackbarHostState: SnackbarHostState,
-        onResult: (NavigationPath?, IndoorCustomRoute?) -> Unit
-) {
-    if (startPoint == null || endPoint == null) {
-        scope.launch { snackbarHostState.showSnackbar("請先設定起點和終點") }
-        return
+    fun screenToImage(p: Offset): Offset? {
+        val bmp = imageBitmap ?: return null
+        val ix = ((p.x - offsetX) / scale)
+        val iy = ((p.y - offsetY) / scale)
+        if (ix < 0 || iy < 0 || ix >= bmp.width || iy >= bmp.height) return null
+        return Offset(ix, iy)
+    }
+    fun imageToGrid(pt: Offset, g: Grid, s: Int): Pair<Int, Int> {
+        val gx = (pt.x / s).toInt()
+        val gy = (pt.y / s).toInt()
+        return gx to gy
     }
 
-    val s = startPoint
-    val e = endPoint
+    // ===== (3) 路徑計算搬到背景執行緒 =====
+    fun recomputePathAsync() {
+        val g = grid ?: return
+        val sPt = start ?: return
+        val ePt = goal ?: return
+        val (sx, sy) = imageToGrid(sPt, g, gridSample)
+        val (gx, gy) = imageToGrid(ePt, g, gridSample)
 
-    // 1) 嘗試正向匹配
-    val forward =
-            availableCustomRoutes.firstOrNull { r ->
-                val rp0 = r.points.firstOrNull()
-                val rpn = r.points.lastOrNull()
-                isSameEndpoint(rp0, s) && isSameEndpoint(rpn, e)
+        scope.launch(Dispatchers.Default) {
+            val raw = aStar(g, sx, sy, gx, gy)
+            if (raw.isEmpty()) {
+                withContext(Dispatchers.Main) { path = emptyList() }
+                return@launch
             }
-
-    // 2) 嘗試反向匹配
-    val reversed =
-            availableCustomRoutes.firstOrNull { r ->
-                val rp0 = r.points.firstOrNull()
-                val rpn = r.points.lastOrNull()
-                isSameEndpoint(rp0, e) && isSameEndpoint(rpn, s)
-            }
-
-    val appliedRoutePoints: List<ReferencePoint>?
-    val routeUsed: IndoorCustomRoute?
-
-    if (forward != null) {
-        appliedRoutePoints = forward.points
-        routeUsed = forward
-    } else if (reversed != null) {
-        appliedRoutePoints = reversed.points.reversed()
-        routeUsed = reversed
-    } else {
-        appliedRoutePoints = null
-        routeUsed = null
+            val vis = smoothByVisibility(raw, g)
+            val px = vis.map { node -> Offset((node.x + 0.5f) * gridSample, (node.y + 0.5f) * gridSample) }
+            val simplified = rdp(px, eps = (gridSample * 0.75f))
+            withContext(Dispatchers.Main) { path = simplified }
+        }
     }
 
-    if (appliedRoutePoints != null) {
-        val navigationPath =
-                NavigationPath(
-                        points = appliedRoutePoints,
-                        totalDistance = calculateRouteDistance(appliedRoutePoints)
-                )
-        onResult(navigationPath, routeUsed)
-        scope.launch { snackbarHostState.showSnackbar("使用自定義路線：${routeUsed?.name}") }
-    } else {
-        // 回退直線
-        val navigationPath = findPath(emptyList(), s, e)
-        onResult(navigationPath, null)
-        val distance = "%.2f".format(navigationPath.totalDistance)
-        scope.launch { snackbarHostState.showSnackbar("路徑規劃完成，總距離: $distance 單位") }
+    // 影像座標 -> 螢幕座標（用於畫點/路徑時）
+    fun imgToScreen(p: Offset) = Offset(p.x * scale + offsetX, p.y * scale + offsetY)
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("平面圖導航 Demo", fontWeight = FontWeight.SemiBold) },
+                actions = {
+                    // 樓層下拉
+                    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
+                        TextButton(onClick = { expanded = true }, modifier = Modifier.menuAnchor()) {
+                            Text(selectedFloorName)
+                        }
+                        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            floorPlans.forEach { (name, resId) ->
+                                DropdownMenuItem(
+                                    text = { Text(name) },
+                                    onClick = {
+                                        selectedFloorName = name
+                                        currentImageRes = resId
+                                        expanded = false
+                                        // 清狀態
+                                        start = null; goal = null; path = emptyList()
+                                        grid = null; overlay = null; walkableCount = 0
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // 建網格（並生成覆蓋圖）
+                    TextButton(onClick = {
+                        val bmp = imageBitmap?.asAndroidBitmap() ?: return@TextButton
+                        val g = bitmapToGridFromWhiteCorridor(
+                            bitmap = bmp,
+                            sample = gridSample,
+                            satMax = 0.12f,
+                            valMin = 0.92f,
+                            wallInflate = 3
+                        )
+                        grid = g
+                        start = null; goal = null; path = emptyList()
+                        walkableCount = g.cells.count { it }
+                        overlay = null
+                        scope.launch { overlay = buildGridOverlayBitmap(g) } // 背景生成，不卡 UI
+                    }) { Text("建網格") }
+
+                    // 顯示/隱藏網格覆蓋
+                    TextButton(onClick = { showGridOverlay = !showGridOverlay }) {
+                        Text(if (showGridOverlay) "隱藏網格" else "顯示網格")
+                    }
+
+                    // 偵錯：可走格數
+                    Text("walkable=$walkableCount", style = MaterialTheme.typography.labelSmall)
+
+                    // 清除
+                    TextButton(onClick = { start = null; goal = null; path = emptyList() }) { Text("清除") }
+                }
+            )
+        }
+    ) { padding ->
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(padding)
+        ) {
+            imageBitmap?.let { bmp ->
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .clipToBounds()
+                        .transformable(transformState)
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onDoubleTap = { p ->
+                                    val ip = screenToImage(p) ?: return@detectTapGestures
+                                    if (start == null) start = ip
+                                    else if (goal == null) { goal = ip; recomputePathAsync() }
+                                    else { start = ip; goal = null; path = emptyList() }
+                                }
+                            )
+                        }
+                ) {
+                    // ===== (1) 單一 Canvas，且只畫「可見區域」 =====
+                    Canvas(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        // 可見區域（影像座標系）
+                        val invScale = 1f / scale
+                        val visLeft   = (-offsetX) * invScale
+                        val visTop    = (-offsetY) * invScale
+                        val visRight  = (size.width  - offsetX) * invScale
+                        val visBottom = (size.height - offsetY) * invScale
+
+                        val srcLeft   = visLeft.coerceIn(0f, bmp.width.toFloat())
+                        val srcTop    = visTop.coerceIn(0f, bmp.height.toFloat())
+                        val srcRight  = visRight.coerceIn(0f, bmp.width.toFloat())
+                        val srcBottom = visBottom.coerceIn(0f, bmp.height.toFloat())
+
+                        val dstLeft   = srcLeft  * scale + offsetX
+                        val dstTop    = srcTop   * scale + offsetY
+                        val dstRight  = srcRight * scale + offsetX
+                        val dstBottom = srcBottom* scale + offsetY
+
+                        val srcW = (srcRight - srcLeft).coerceAtLeast(0f)
+                        val srcH = (srcBottom - srcTop).coerceAtLeast(0f)
+                        val dstW = (dstRight - dstLeft).coerceAtLeast(0f)
+                        val dstH = (dstBottom - dstTop).coerceAtLeast(0f)
+
+                        // 背景圖：只畫可見塊
+                        if (srcW > 0f && srcH > 0f && dstW > 0f && dstH > 0f) {
+                            drawImage(
+                                image = bmp,
+                                srcOffset = IntOffset(srcLeft.toInt(), srcTop.toInt()),
+                                srcSize   = IntSize(srcW.toInt(), srcH.toInt()),
+                                dstOffset = IntOffset(dstLeft.toInt(), dstTop.toInt()),
+                                dstSize   = IntSize(dstW.toInt(), dstH.toInt())
+                            )
+
+                            // Overlay：用自己的像素座標裁切（grid 像素）
+                            val g = grid; val ov = overlay
+                            if (showGridOverlay && g != null && ov != null) {
+                                // 取樣倍率：原始影像像素 / Grid 像素（通常 = gridSample）
+                                val ovScaleX = imageBitmap!!.width  / g.w.toFloat()
+                                val ovScaleY = imageBitmap!!.height / g.h.toFloat()
+
+                                // 把背景圖的 src 矩形換算成 overlay 的 src 矩形（各自用自己的座標系）
+                                val oSrcLeft   = (srcLeft   / ovScaleX).coerceIn(0f, g.w.toFloat())
+                                val oSrcTop    = (srcTop    / ovScaleY).coerceIn(0f, g.h.toFloat())
+                                val oSrcRight  = (srcRight  / ovScaleX).coerceIn(0f, g.w.toFloat())
+                                val oSrcBottom = (srcBottom / ovScaleY).coerceIn(0f, g.h.toFloat())
+
+                                val oSrcW = (oSrcRight - oSrcLeft).coerceAtLeast(0f)
+                                val oSrcH = (oSrcBottom - oSrcTop).coerceAtLeast(0f)
+
+                                if (oSrcW > 0f && oSrcH > 0f) {
+                                    drawImage(
+                                        image = ov,
+                                        srcOffset = IntOffset(oSrcLeft.toInt(), oSrcTop.toInt()),
+                                        srcSize   = IntSize(oSrcW.toInt(), oSrcH.toInt()),
+                                        // 目的地矩形仍用背景圖的 dst，這樣就能貼齊
+                                        dstOffset = IntOffset(dstLeft.toInt(), dstTop.toInt()),
+                                        dstSize   = IntSize(dstW.toInt(), dstH.toInt())
+                                    )
+                                }
+                            }
+                        }
+
+                        // 起訖點（將影像座標轉螢幕座標後繪製）
+                        start?.let {
+                            val s = imgToScreen(it)
+                            drawCircle(color = colorMaterial.primary, radius = 8f, center = s)
+                        }
+                        goal?.let  {
+                            val g2 = imgToScreen(it)
+                            drawCircle(color = colorMaterial.tertiary, radius = 8f, center = g2)
+                        }
+
+                        // 路徑（逐點轉換成螢幕座標繪製）
+                        if (path.isNotEmpty()) {
+                            val p = Path().apply {
+                                val first = imgToScreen(path.first())
+                                moveTo(first.x, first.y)
+                                for (i in 1 until path.size) {
+                                    val sp = imgToScreen(path[i])
+                                    lineTo(sp.x, sp.y)
+                                }
+                            }
+                            drawPath(path = p, color = colorMaterial.secondary, style = Stroke(width = 5f))
+                        }
+                    }
+                }
+            } ?: run {
+                Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                    Text("尚未載入平面圖資源")
+                }
+            }
+        }
     }
 }
