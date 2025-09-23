@@ -262,6 +262,25 @@ interface ReferencePointDao {
 
     @Query("DELETE FROM reference_points WHERE id = :id")
     suspend fun deleteReferencePointById(id: String)
+
+    @Query("SELECT * FROM reference_points WHERE type = 'CLASSROOM'")
+    fun getClassroomPoints(): Flow<List<ReferencePointEntity>>
+
+    @Query("SELECT * FROM reference_points WHERE imageId = :imageId AND type = 'CLASSROOM'")
+    fun getClassroomPointsByImageId(imageId: Int): Flow<List<ReferencePointEntity>>
+
+    @Query(
+            "SELECT * FROM reference_points " +
+                    "WHERE buildingId = :buildingId AND floorId = :floorId AND type = 'CLASSROOM'"
+    )
+    fun getClassroomPointsByFloor(
+            buildingId: String,
+            floorId: Int
+    ): Flow<List<ReferencePointEntity>>
+
+    // 可用於偵測是否需要補資料（目前改為每次 onOpen 都回填，保留此API以備未來需求）
+    @Query("SELECT COUNT(*) FROM reference_points WHERE type = 'CLASSROOM'")
+    suspend fun countClassrooms(): Int
 }
 
 @Dao
@@ -372,6 +391,14 @@ abstract class IndoorMapDatabase : RoomDatabase() {
             }
         }
 
+        // 新增：每次開啟資料庫都執行回填，修正舊DB缺資料或 imageId 不匹配
+        override fun onOpen(db: SupportSQLiteDatabase) {
+            super.onOpen(db)
+            INSTANCE?.let { database ->
+                CoroutineScope(Dispatchers.IO).launch { backfillOnOpen(database) }
+            }
+        }
+
         private suspend fun prepopulateDatabase(database: IndoorMapDatabase) {
             // 1. 添加建築物
             val building =
@@ -386,7 +413,30 @@ abstract class IndoorMapDatabase : RoomDatabase() {
                     )
             database.buildingDao().insertBuilding(building)
 
-            // 2. 添加樓層
+            // 新增：SEB、SEC 建築
+            val buildingSEB =
+                    BuildingEntity(
+                            id = "SEB",
+                            name = "理工學院B棟",
+                            description = "B棟",
+                            entranceX = 50.0,
+                            entranceY = 50.0,
+                            entranceFloorId = 4,
+                            entranceImageId = R.drawable.seb4
+                    )
+            val buildingSEC =
+                    BuildingEntity(
+                            id = "SEC",
+                            name = "理工學院C棟",
+                            description = "C棟",
+                            entranceX = 50.0,
+                            entranceY = 50.0,
+                            entranceFloorId = 4,
+                            entranceImageId = R.drawable.sec4
+                    )
+            database.buildingDao().insertAllBuildings(listOf(buildingSEB, buildingSEC))
+
+            // 2. 添加樓層（SE 1~5）
             val floors =
                     listOf(
                             FloorEntity(
@@ -427,6 +477,30 @@ abstract class IndoorMapDatabase : RoomDatabase() {
                     )
             database.floorDao().insertAllFloors(floors)
 
+            // 新增：SEB 4F、SEC 4F/5F
+            val extraFloors =
+                    listOf(
+                            FloorEntity(
+                                    buildingId = "SEB",
+                                    floorNumber = 4,
+                                    name = "B棟4樓",
+                                    imageId = R.drawable.seb4
+                            ),
+                            FloorEntity(
+                                    buildingId = "SEC",
+                                    floorNumber = 4,
+                                    name = "C棟4樓",
+                                    imageId = R.drawable.sec4
+                            ),
+                            FloorEntity(
+                                    buildingId = "SEC",
+                                    floorNumber = 5,
+                                    name = "C棟5樓",
+                                    imageId = R.drawable.sec5
+                            )
+                    )
+            database.floorDao().insertAllFloors(extraFloors)
+
             // 3. 創建理工學院入口參考點
             val entrancePoint =
                     ReferencePointEntity(
@@ -442,9 +516,8 @@ abstract class IndoorMapDatabase : RoomDatabase() {
                     )
             database.referencePointDao().insertReferencePoint(entrancePoint)
 
-            // 4. 添加預設教室資料
-            val classroomPoints = getDefaultClassroomPoints()
-            database.referencePointDao().insertAllReferencePoints(classroomPoints)
+            // 4. 匯入教室點（改由 raw 檔案解析）
+            importClassroomPointsFromRaw(context, database)
 
             // 5. 添加走廊向量
             val corridorVectors = getDefaultCorridorVectors()
@@ -455,6 +528,132 @@ abstract class IndoorMapDatabase : RoomDatabase() {
             database.areaConnectivityDao().insertAllAreas(areas)
         }
 
+        // 新增：每次開啟資料庫都執行回填，修正舊DB缺資料或 imageId 不匹配
+        private suspend fun backfillOnOpen(database: IndoorMapDatabase) {
+            // 1) 建築 SEB/SEC 若不存在則插入（REPLACE 保險）
+            val buildingSEB =
+                    BuildingEntity(
+                            id = "SEB",
+                            name = "理工學院B棟",
+                            description = "B棟",
+                            entranceX = 50.0,
+                            entranceY = 50.0,
+                            entranceFloorId = 4,
+                            entranceImageId = R.drawable.seb4
+                    )
+            val buildingSEC =
+                    BuildingEntity(
+                            id = "SEC",
+                            name = "理工學院C棟",
+                            description = "C棟",
+                            entranceX = 50.0,
+                            entranceY = 50.0,
+                            entranceFloorId = 4,
+                            entranceImageId = R.drawable.sec4
+                    )
+            database.buildingDao().insertAllBuildings(listOf(buildingSEB, buildingSEC))
+
+            // 2) 樓層若不存在就補（查無才插入）
+            suspend fun ensureFloor(bid: String, num: Int, name: String, imageId: Int) {
+                val exist = database.floorDao().getFloorByBuildingAndNumber(bid, num)
+                if (exist == null) {
+                    database.floorDao()
+                            .insertFloor(
+                                    FloorEntity(
+                                            buildingId = bid,
+                                            floorNumber = num,
+                                            name = name,
+                                            imageId = imageId
+                                    )
+                            )
+                }
+            }
+            // SE 1~5
+            ensureFloor("SE", 1, "1樓", R.drawable.se1)
+            ensureFloor("SE", 2, "2樓", R.drawable.se2)
+            ensureFloor("SE", 3, "3樓", R.drawable.se3)
+            ensureFloor("SE", 4, "4樓", R.drawable.sea4)
+            ensureFloor("SE", 5, "5樓", R.drawable.sea5)
+            // SEB 4、SEC 4/5
+            ensureFloor("SEB", 4, "B棟4樓", R.drawable.seb4)
+            ensureFloor("SEC", 4, "C棟4樓", R.drawable.sec4)
+            ensureFloor("SEC", 5, "C棟5樓", R.drawable.sec5)
+
+            // 3) 重新匯入所有教室點（REPLACE upsert，修正舊 imageId 與缺漏）
+            importClassroomPointsFromRaw(context, database)
+        }
+
+        // 由 res/raw/reference_points_output.txt 解析教室點並寫入 DB
+        private suspend fun importClassroomPointsFromRaw(
+                context: Context,
+                database: IndoorMapDatabase
+        ) {
+            // 改為：圖片 -> (建築ID, 樓層)
+            val allowedImageToBuildingFloor =
+                    mapOf(
+                            // SE 1~3
+                            "se1" to ("SE" to 1),
+                            "se2" to ("SE" to 2),
+                            "se3" to ("SE" to 3),
+                            // SE(A棟) 4~5
+                            "sea4" to ("SE" to 4),
+                            "sea5" to ("SE" to 5),
+                            // SEB(B棟) 4
+                            "seb4" to ("SEB" to 4),
+                            // SEC(C棟) 4~5
+                            "sec4" to ("SEC" to 4),
+                            "sec5" to ("SEC" to 5)
+                    )
+            val pattern =
+                    Regex(
+                            """ReferencePointEntity\("([^"]+)",\s*"([^"]+)",\s*([-0-9.]+),\s*([-0-9.]+),\s*R\.drawable\.([A-Za-z0-9_]+),\s*\d+,\s*"([A-Z_]+)""""
+                    )
+
+            val imported = mutableListOf<ReferencePointEntity>()
+            val resId = R.raw.reference_points_output
+            context.resources.openRawResource(resId).bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    val m = pattern.find(line) ?: return@forEach
+                    val (id, name, xStr, yStr, imageName, type) = m.destructured
+                    if (type != "CLASSROOM") return@forEach
+
+                    val buildingFloor = allowedImageToBuildingFloor[imageName] ?: return@forEach
+                    val (buildingId, floorNumber) = buildingFloor
+
+                    val imageId =
+                            context.resources.getIdentifier(
+                                    imageName,
+                                    "drawable",
+                                    context.packageName
+                            )
+                    if (imageId == 0) return@forEach
+
+                    val floorEntity =
+                            database.floorDao().getFloorByBuildingAndNumber(buildingId, floorNumber)
+                                    ?: return@forEach
+
+                    imported +=
+                            ReferencePointEntity(
+                                    id = id,
+                                    name = name,
+                                    x = xStr.toDoubleOrNull() ?: return@forEach,
+                                    y = yStr.toDoubleOrNull() ?: return@forEach,
+                                    imageId = imageId,
+                                    scanCount = 0,
+                                    type = "CLASSROOM",
+                                    buildingId = buildingId, // 關鍵：使用對應建築
+                                    floorId = floorEntity.id, // 關鍵：使用該建築 + 樓層的 floorId
+                                    isUserDefined = false
+                            )
+                }
+            }
+
+            if (imported.isNotEmpty()) {
+                database.referencePointDao().insertAllReferencePoints(imported)
+            }
+        }
+
+        // 保留：原本的預設教室資料方法，但不再呼叫
         private fun getDefaultClassroomPoints(): List<ReferencePointEntity> {
             // 將所有教室資料轉換為實體
             return listOf(
@@ -803,5 +1002,26 @@ class IndoorMapRepository(private val context: Context) {
     // 區域連通性相關
     fun getAreasByFloor(buildingId: String, floorId: Int): Flow<List<AreaConnectivityEntity>> {
         return areaConnectivityDao.getAreasByFloor(buildingId, floorId)
+    }
+
+    // 只取教室點（全部）
+    fun getClassroomPoints(): Flow<List<ReferencePoint>> {
+        return referencePointDao.getClassroomPoints().map { entities ->
+            entities.map { it.toReferencePoint() }
+        }
+    }
+
+    // 只取教室點（依影像資源 id，可用於 UI 的樓層圖切換）
+    fun getClassroomPointsByImageId(imageId: Int): Flow<List<ReferencePoint>> {
+        return referencePointDao.getClassroomPointsByImageId(imageId).map { entities ->
+            entities.map { it.toReferencePoint() }
+        }
+    }
+
+    // 只取教室點（依建築/樓層）
+    fun getClassroomPointsByFloor(buildingId: String, floorId: Int): Flow<List<ReferencePoint>> {
+        return referencePointDao.getClassroomPointsByFloor(buildingId, floorId).map { entities ->
+            entities.map { it.toReferencePoint() }
+        }
     }
 }

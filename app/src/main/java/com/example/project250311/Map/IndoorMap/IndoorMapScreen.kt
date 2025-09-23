@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.core.graphics.drawable.toBitmap
 import com.example.project250311.Map.IndoorMap.Database.GridCacheEntity
 import com.example.project250311.Map.IndoorMap.Database.IndoorMapDatabase
+import com.example.project250311.Map.IndoorMap.Database.ReferencePointEntity
 import com.example.project250311.R
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -276,7 +277,6 @@ suspend fun buildGridOverlayBitmap(g: Grid): ImageBitmap =
         }
 
 // ======================= 主畫面 =======================
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IndoorMapScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -286,6 +286,7 @@ fun IndoorMapScreen(modifier: Modifier = Modifier) {
     // DB 與 DAO（快取）
     val db = remember { IndoorMapDatabase.getDatabase(context) }
     val gridDao = remember(db) { db.gridCacheDao() }
+    val refDao = remember(db) { db.referencePointDao() } // 新增：參考點 DAO
 
     val floorPlans =
             listOf(
@@ -347,10 +348,15 @@ fun IndoorMapScreen(modifier: Modifier = Modifier) {
     var path by remember { mutableStateOf<List<Offset>>(emptyList()) }
     var showGridOverlay by remember { mutableStateOf(false) }
 
-    // 覆蓋圖 & 偵錯
+    // 新增：Overlay 與偵錯統計（原本有使用到，但未宣告）
     var overlay by remember { mutableStateOf<ImageBitmap?>(null) }
     var walkableCount by remember { mutableStateOf(0) }
 
+    // 顯示教室點
+    var showClassrooms by remember { mutableStateOf(false) }
+    var classroomPoints by remember { mutableStateOf<List<ReferencePointEntity>>(emptyList()) }
+
+    // 新增：工具函式（先前使用但未宣告，導致型別推論錯誤）
     fun screenToImage(p: Offset): Offset? {
         val bmp = imageBitmap ?: return null
         val ix = ((p.x - offsetX) / scale)
@@ -362,6 +368,15 @@ fun IndoorMapScreen(modifier: Modifier = Modifier) {
         val gx = (pt.x / s).toInt()
         val gy = (pt.y / s).toInt()
         return gx to gy
+    }
+
+    // 依當前樓層圖片載入/清除教室點
+    LaunchedEffect(currentImageRes, showClassrooms) {
+        if (showClassrooms) {
+            refDao.getClassroomPointsByImageId(currentImageRes).collect { classroomPoints = it }
+        } else {
+            classroomPoints = emptyList()
+        }
     }
 
     // ===== (3) 路徑計算搬到背景執行緒 =====
@@ -530,6 +545,11 @@ fun IndoorMapScreen(modifier: Modifier = Modifier) {
                                 Text(if (showGridOverlay) "隱藏網格" else "顯示網格")
                             }
 
+                            // 新增：顯示/隱藏 教室點
+                            TextButton(onClick = { showClassrooms = !showClassrooms }) {
+                                Text(if (showClassrooms) "隱藏教室" else "顯示教室")
+                            }
+
                             // 偵錯：可走格數
                             Text(
                                     "walkable=$walkableCount",
@@ -637,14 +657,27 @@ fun IndoorMapScreen(modifier: Modifier = Modifier) {
                             }
                         }
 
+                        // 可視樣式大小（可依需求微調）
+                        val classroomRadius = 10f
+                        val startGoalRadius = 14f
+                        val pathWidth = 8f
+
                         // 起訖點（將影像座標轉螢幕座標後繪製）
                         start?.let {
                             val s = imgToScreen(it)
-                            drawCircle(color = colorMaterial.primary, radius = 8f, center = s)
+                            drawCircle(
+                                    color = colorMaterial.primary,
+                                    radius = startGoalRadius,
+                                    center = s
+                            )
                         }
                         goal?.let {
                             val g2 = imgToScreen(it)
-                            drawCircle(color = colorMaterial.tertiary, radius = 8f, center = g2)
+                            drawCircle(
+                                    color = colorMaterial.tertiary,
+                                    radius = startGoalRadius,
+                                    center = g2
+                            )
                         }
 
                         // 路徑（逐點轉換成螢幕座標繪製）
@@ -661,8 +694,22 @@ fun IndoorMapScreen(modifier: Modifier = Modifier) {
                             drawPath(
                                     path = p,
                                     color = colorMaterial.secondary,
-                                    style = Stroke(width = 5f)
+                                    style = Stroke(width = pathWidth)
                             )
+                        }
+
+                        // 教室點（影像百分比 -> 影像像素 -> 螢幕座標）
+                        if (showClassrooms && classroomPoints.isNotEmpty()) {
+                            classroomPoints.forEach { rp ->
+                                val imgX = (rp.x.toFloat() / 100f) * bmp.width
+                                val imgY = (rp.y.toFloat() / 100f) * bmp.height
+                                val scr = imgToScreen(Offset(imgX, imgY))
+                                drawCircle(
+                                        color = colorMaterial.primary.copy(alpha = 0.9f),
+                                        radius = classroomRadius,
+                                        center = scr
+                                )
+                            }
                         }
                     }
                 }
