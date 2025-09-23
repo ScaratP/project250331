@@ -216,9 +216,14 @@ fun IndoorMapScreen(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
 
     val floorPlans = listOf(
-        "一樓平面圖" to R.drawable.se1,
-        "二樓平面圖" to R.drawable.se2,
-        "三樓平面圖" to R.drawable.se3,
+        "SE1" to R.drawable.se1,
+        "SE2" to R.drawable.se2,
+        "SE3" to R.drawable.se3,
+        "SEA4" to R.drawable.sea4,
+        "SEA5" to R.drawable.sea5,
+        "SEB4" to R.drawable.seb4,
+        "SEC4" to R.drawable.sec4,
+        "SEC5" to R.drawable.sec5
     )
 
     var expanded by remember { mutableStateOf(false) }
