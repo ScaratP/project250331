@@ -1,6 +1,5 @@
 package com.example.project250311.Schedule.Food
 
-
 import android.content.Intent
 import android.graphics.Paint
 import android.graphics.Typeface
