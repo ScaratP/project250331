@@ -26,6 +26,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -95,9 +96,279 @@ fun MapScreen(navController: NavHostController) {
     var startExpanded by remember { mutableStateOf(false) }
     var destExpanded by remember { mutableStateOf(false) }
 
-
     // 4. 自訂地點列表（保留你的完整項目）
     val customPoints = remember {
+        listOf(
+            // C棟教室 - 第一層
+            CustomPoint(LatLng(31.297901153564453, 83.31011199951172), "sec112", "理工學院 C棟 C112 教室"),
+            CustomPoint(LatLng(42.17558670043945, 82.67748260498047), "sec111f", "理工學院 C棟 C111 教室-前門"),
+            CustomPoint(LatLng(43.05496597290039, 88.41331481933594), "sec111b", "理工學院 C棟 C111 教室-後門"),
+            CustomPoint(LatLng(47.11360168457031, 81.99949645996094), "sec110f", "理工學院 C棟 C110 教室-前門"),
+            CustomPoint(LatLng(55.860633850097656, 81.97007751464844), "sec110b", "理工學院 C棟 C110 教室-後門"),
+            CustomPoint(LatLng(53.858638763427734, 79.76398468017578), "sec101", "理工學院 C棟 C101 教室"),
+            CustomPoint(LatLng(57.482391357421875, 81.64453125), "sec109", "理工學院 C棟 C109 教室"),
+            CustomPoint(LatLng( 56.883663177490234, 79.9090805053711), "sec102f", "理工學院 C棟 C102 教室-前門"),
+            CustomPoint(LatLng(63.0668830871582, 79.71481323242188), "sec102b", "理工學院 C棟 C102 教室-後門"),
+            CustomPoint(LatLng(65.35888671875, 79.84718322753906), "sec103f", "理工學院 C棟 C103 教室-前門"),
+            CustomPoint(LatLng(70.23289489746094, 79.83248138427734), "sec103b", "理工學院 C棟 C103 教室-後門"),
+            CustomPoint(LatLng(82.47122192382812, 79.19624328613281), "sec104f", "理工學院 C棟 C104 教室-前門"),
+            CustomPoint(LatLng(90.61561584472656, 82.97599792480469), "sec105", "理工學院 C棟 C105 教室"),
+            CustomPoint(LatLng(82.17730712890625, 81.4611587524414), "sec106", "理工學院 C棟 C106 教室"),
+            CustomPoint(LatLng(64.7601547241211, 81.7297134399414), "sec107f", "理工學院 C棟 C107 教室-前門"),
+            CustomPoint(LatLng(71.50485229492188, 81.60088348388672), "sec107b", "理工學院 C棟 C107 教室-後門"),
+            CustomPoint(LatLng(60.943782806396484, 81.4974594116211), "sec108", "理工學院 C棟 C108 教室"),
+            
+            // C棟教室 - 第二層
+            CustomPoint(LatLng(60.36102294921875, 83.49526977539062), "sec201", "理工學院 C棟 C201 教室"),
+            CustomPoint(LatLng(66.22871398925781, 83.43477630615234), "sec202", "理工學院 C棟 C202 教室"),
+            CustomPoint(LatLng(71.75079345703125, 83.53558349609375), "sec203", "理工學院 C棟 C203 教室"),
+            CustomPoint(LatLng(77.11966705322266, 83.41966247558594), "sec204", "理工學院 C棟 C204 教室"),
+            CustomPoint(LatLng(76.24322509765625, 85.37017822265625), "sec205", "理工學院 C棟 C205 教室"),
+            CustomPoint(LatLng(73.5570068359375, 85.18116760253906), "sec206", "理工學院 C棟 C206 教室"),
+            CustomPoint(LatLng(70.89215850830078, 85.24166107177734), "sec207", "理工學院 C棟 C207 教室"),
+            CustomPoint(LatLng(68.4232406616211, 85.20890808105469), "sec208", "理工學院 C棟 C208 教室"),
+            CustomPoint(LatLng(65.46757507324219, 85.21044158935547), "sec209", "理工學院 C棟 C209 教室"),
+            CustomPoint(LatLng(62.51058578491211, 85.3389892578125), "sec210", "理工學院 C棟 C210 教室"),
+            CustomPoint(LatLng(59.85283660888672, 85.10965728759766), "sec211", "理工學院 C棟 C211 教室"),
+            CustomPoint(LatLng(57.12031173706055, 85.23062133789062), "sec212", "理工學院 C棟 C212 教室"),
+            CustomPoint(LatLng(54.644264221191406, 85.21548461914062), "sec213", "理工學院 C棟 C213 教室"),
+            CustomPoint(LatLng(51.61960220336914, 85.13485717773438), "sec214", "理工學院 C棟 C214 教室"),
+            CustomPoint(LatLng(48.57292175292969, 86.13847351074219), "sec215", "理工學院 C棟 C215 教室"),
+            CustomPoint(LatLng(48.82587814331055, 89.62120056152344), "sec216", "理工學院 C棟 C216 教室"),
+            CustomPoint(LatLng(37.728912353515625, 84.5806884765625), "sec217", "理工學院 C棟 C217 教室"),
+            CustomPoint(LatLng(37.13917541503906, 83.12316131591797), "sec218", "理工學院 C棟 C218 教室"),
+            CustomPoint(LatLng(87.96910858154297, 83.68539428710938), "sec219f", "理工學院 C棟 C219 教室-前門"),
+            CustomPoint(LatLng(93.48053741455078, 83.66523742675781), "sec219b", "理工學院 C棟 C219 教室-後門"),
+            CustomPoint(LatLng(87.40264892578125, 85.75760650634766), "sec221", "理工學院 C棟 C221 教室"),
+            
+            // C棟教室 - 第三層
+            CustomPoint(LatLng(37.122840881347656, 82.91508483886719), "sec313", "理工學院 C棟 C313 教室"),
+            CustomPoint(LatLng(37.010528564453125, 84.51817321777344), "sec312", "理工學院 C棟 C312 教室"),
+            CustomPoint(LatLng(49.0062370300293, 86.35113525390625), "sec311f", "理工學院 C棟 C311 教室-前門"),
+            CustomPoint(LatLng(49.42385482788086, 94.34064483642578), "sec311b", "理工學院 C棟 C311 教室-後門"),
+            CustomPoint(LatLng(60.82547378540039, 85.48767852783203), "sec310", "理工學院 C棟 C310 教室"),
+            CustomPoint(LatLng(62.88628005981445, 85.82139587402344), "sec309", "理工學院 C棟 C309 教室"),
+            CustomPoint(LatLng(66.63400268554688, 85.8162841796875), "sec308", "理工學院 C棟 C308 教室"),
+            CustomPoint(LatLng(59.85283660888672, 85.10965728759766), "sec307", "理工學院 C棟 C307 教室"),
+            CustomPoint(LatLng(62.51058578491211, 85.3389892578125), "sec306", "理工學院 C棟 C306 教室"),
+            CustomPoint(LatLng(65.46757507324219, 85.21044158935547), "sec305", "理工學院 C棟 C305 教室"),
+            CustomPoint(LatLng(68.4232406616211, 85.20890808105469), "sec304", "理工學院 C棟 C304 教室"),
+            CustomPoint(LatLng(88.12644958496094, 84.04352569580078), "sec303", "理工學院 C棟 C303 教室"),
+            CustomPoint(LatLng(77.01409149169922, 83.9059829711914), "sec302b", "理工學院 C棟 C302 教室-後門"),
+            CustomPoint(LatLng(63.350074768066406, 83.59292602539062), "sec302f", "理工學院 C棟 C302 教室-前門"),
+            CustomPoint(LatLng(57.911407470703125, 83.7061538696289), "sec301", "理工學院 C棟 C301 教室"),
+
+            // C棟教室 - 第四層
+            CustomPoint(LatLng(34.798728942871094, 59.05976867675781), "sec401", "理工學院 C棟 C401 教室"),
+            CustomPoint(LatLng(41.9062614440918, 59.50159454345703), "sec402f", "理工學院 C棟 C402 教室-前門"),
+            CustomPoint(LatLng(52.2175178527832, 59.50159454345703), "sec402b", "理工學院 C棟 C402 教室-後門"),
+            CustomPoint(LatLng(55.67565155029297, 59.366397857666016), "sec403f", "理工學院 C棟 C403 教室-前門"),
+            CustomPoint(LatLng(66.4501953125, 59.075225830078125), "sec403b", "理工學院 C棟 C403 教室-後門"),
+            CustomPoint(LatLng(80.09688568115234, 59.34395217895508), "sec404", "理工學院 C棟 C404 教室"),
+            CustomPoint(LatLng(89.43525695800781, 67.76742553710938), "sec405", "理工學院 C棟 C405 教室"),
+            CustomPoint(LatLng(86.19230651855469, 67.03947448730469), "sec406", "理工學院 C棟 C406 教室"),
+            CustomPoint(LatLng(82.65815734863281, 65.29237365722656), "sec407", "理工學院 C棟 C407 教室"),
+            CustomPoint(LatLng(79.60713195800781, 64.0860595703125), "sec408", "理工學院 C棟 C408 教室"),
+            CustomPoint(LatLng(65.48392486572266, 63.98371505737305), "sec409", "理工學院 C棟 C409 教室"),
+            CustomPoint(LatLng(62.06228256225586, 63.609344482421875), "sec410", "理工學院 C棟 C410 教室"),
+            CustomPoint(LatLng(58.97816848754883, 63.8381233215332), "sec411", "理工學院 C棟 C411 教室"),
+            CustomPoint(LatLng(55.268550872802734, 63.97332000732422), "sec412", "理工學院 C棟 C412 教室"),
+            CustomPoint(LatLng(51.7608642578125, 63.72373580932617), "sec413", "理工學院 C棟 C413 教室"),
+            CustomPoint(LatLng(48.53562927246094, 63.74387741088867), "sec414", "理工學院 C棟 C414 教室"),
+            CustomPoint(LatLng(44.75922393798828, 63.55229568481445), "sec415", "理工學院 C棟 C415 教室"),
+            CustomPoint(LatLng(41.3574333190918, 63.406700134277344), "sec416", "理工學院 C棟 C416 教室"),
+            CustomPoint(LatLng(37.737239837646484, 63.80187225341797), "sec417", "理工學院 C棟 C417 教室"),
+            CustomPoint(LatLng(34.69944763183594, 62.88039016723633), "sec418", "理工學院 C棟 C418 教室"),
+            CustomPoint(LatLng(30.19976234436035, 66.63758850097656), "sec419", "理工學院 C棟 C419 教室"),
+            CustomPoint(LatLng(30.762313842773438, 75.2066650390625), "sec420f", "理工學院 C棟 C420 教室-前門"),
+            CustomPoint(LatLng(30.570384979248047, 88.87684631347656), "sec420b", "理工學院 C棟 C420 教室-後門"),
+
+            // C棟教室 - 第五層
+            CustomPoint(LatLng(30.19976234436035, 54.377628), "sec501", "理工學院 C棟 C501 教室"),
+            CustomPoint(LatLng(33.7484130859375, 54.377628), "sec502", "理工學院 C棟 C502 教室"),
+            CustomPoint(LatLng(37.10984802246094, 54.377628), "sec503", "理工學院 C棟 C503 教室"),
+            CustomPoint(LatLng(40.64947509765625, 54.377628), "sec504", "理工學院 C棟 C504 教室"),
+            CustomPoint(LatLng(44.02111053466797, 54.377628), "sec505", "理工學院 C棟 C505 教室"),
+            CustomPoint(LatLng(47.53451156616211, 54.377628), "sec506", "理工學院 C棟 C506 教室"),
+            CustomPoint(LatLng(50.938175201416016, 54.377628), "sec507", "理工學院 C棟 C507 教室"),
+            CustomPoint(LatLng(54.41509246826172, 54.377628), "sec508", "理工學院 C棟 C508 教室"),
+            CustomPoint(LatLng(57.78739547729492, 54.377628), "sec509", "理工學院 C棟 C509 教室"),
+            CustomPoint(LatLng(61.25969696044922, 54.377628), "sec510", "理工學院 C棟 C510 教室"),
+            CustomPoint(LatLng(64.63133239746094, 54.377628), "sec511", "理工學院 C棟 C511 教室"),
+            CustomPoint(LatLng(68.10363006591797, 54.377628), "sec512", "理工學院 C棟 C512 教室"),
+            CustomPoint(LatLng(71.47526550292969, 54.377628), "sec513", "理工學院 C棟 C513 教室"),
+            CustomPoint(LatLng(74.94756317138672, 54.377628), "sec514", "理工學院 C棟 C514 教室"),
+            CustomPoint(LatLng(78.31919860839844, 54.377628), "sec515", "理工學院 C棟 C515 教室"),
+            CustomPoint(LatLng(81.79150390625, 54.377628), "sec516", "理工學院 C棟 C516 教室"),
+            CustomPoint(LatLng(85.16313171386719, 54.377628), "sec517", "理工學院 C棟 C517 教室"),
+            CustomPoint(LatLng(88.63543701171875, 54.377628), "sec518", "理工學院 C棟 C518 教室"),
+            CustomPoint(LatLng(89.95914459228516, 59.947513580322266), "sec519", "理工學院 C棟 C519 教室"),
+            CustomPoint(LatLng(89.95914459228516, 66.91790771484375), "sec520f", "理工學院 C棟 C520 教室-前門"),
+            CustomPoint(LatLng(89.95914459228516, 75.41790771484375), "sec520b", "理工學院 C棟 C520 教室-後門"),
+
+            // B棟教室 - 第一層
+            CustomPoint(LatLng(23.815876007080078, 61.124855041503906), "seb101", "理工學院 B棟 B101 教室"),
+            CustomPoint(LatLng(24.330406188964844, 57.81572341918945), "seb102", "理工學院 B棟 B102 教室"),
+            CustomPoint(LatLng(41.30967712402344, 53.41679382324219), "seb103", "理工學院 B棟 B103 教室"),
+            CustomPoint(LatLng(46.36882781982422, 52.11393356323242), "seb104f", "理工學院 B棟 B104 教室-前門"),
+            CustomPoint(LatLng(53.48806381225586, 49.775474548339844), "seb104b", "理工學院 B棟 B104 教室-後門"),
+            CustomPoint(LatLng(56.89087677001953, 49.12571716308594), "seb105f", "理工學院 B棟 B105 教室-前門"),
+            CustomPoint(LatLng(64.67432403564453, 46.86079788208008), "seb105b", "理工學院 B棟 B105 教室-後門"),
+            CustomPoint(LatLng(57.70476531982422, 50.68468475341797), "seb106f", "理工學院 B棟 B106 教室-前門"),
+            CustomPoint(LatLng(66.13372802734375, 48.33152770996094), "seb106b", "理工學院 B棟 B106 教室-後門"),
+            CustomPoint(LatLng(47.41659927368164, 53.864097595214844), "seb107-a", "理工學院 B棟 B107a 教室"),
+            CustomPoint(LatLng(55.375343322753906, 51.36121368408203), "seb107-b", "理工學院 B棟 B107b 教室"),
+            CustomPoint(LatLng(44.061641693115234, 70.91503143310547), "seb108f", "理工學院 B棟 B108 教室-前門"),
+            CustomPoint(LatLng(45.549102783203125, 64.25264739990234), "seb108b", "理工學院 B棟 B108 教室-後門"),
+
+            // B棟教室 - 第二層
+            CustomPoint(LatLng(38.17783737182617, 60.49416732788086), "seb201", "理工學院 B棟 B201 教室"),
+            CustomPoint(LatLng(50.08774948120117, 57.14501190185547), "seb202f", "理工學院 B棟 B202 教室-前門"),
+            CustomPoint(LatLng(57.78660583496094, 55.416236877441406), "seb202b", "理工學院 B棟 B202 教室-後門"),
+            CustomPoint(LatLng(59.763877868652344, 55.05335235595703), "seb203f", "理工學院 B棟 B203 教室-前門"),
+            CustomPoint(LatLng(65.89517211914062, 53.629512786865234), "seb203b", "理工學院 B棟 B203 教室-後門"),
+            CustomPoint(LatLng(67.44860076904297, 53.17101287841797), "seb204f", "理工學院 B棟 B204 教室-前門"),
+            CustomPoint(LatLng(73.25212097167969, 51.93618392944336), "seb204b", "理工學院 B棟 B204 教室-後門"),
+            CustomPoint(LatLng(74.10002899169922, 53.33229446411133), "seb205", "理工學院 B棟 B205 教室"),
+            CustomPoint(LatLng(65.52476501464844, 55.41132736206055), "seb206", "理工學院 B棟 B206 教室"),
+            CustomPoint(LatLng(55.18241500854492, 57.712154388427734), "seb207f", "理工學院 B棟 B207 教室-前門"),
+            CustomPoint(LatLng(60.34468460083008, 56.65120315551758), "seb207b", "理工學院 B棟 B207 教室-後門"),
+            CustomPoint(LatLng(51.2869758605957, 68.33016967773438), "seb208f", "理工學院 B棟 B208 教室-前門"),
+            CustomPoint(LatLng(51.2174072265625, 74.63314056396484), "seb208b", "理工學院 B棟 B208 教室-後門"),
+
+            // B棟教室 - 第三層
+            CustomPoint(LatLng(31.403541564941406, 63.401424407958984), "seb301", "理工學院 B棟 B301 教室"),
+            CustomPoint(LatLng(40.003231048583984, 60.01270294189453), "seb302", "理工學院 B棟 B302 教室"),
+            CustomPoint(LatLng(49.835819244384766, 57.48321533203125), "seb303f", "理工學院 B棟 B303 教室-前門"),
+            CustomPoint(LatLng(57.248260498046875, 55.56953430175781), "seb303b", "理工學院 B棟 B303 教室-後門"),
+            CustomPoint(LatLng(59.186988830566406, 55.21876907348633), "seb304f", "理工學院 B棟 B304 教室-前門"),
+            CustomPoint(LatLng(67.04540252685547, 52.75032424926758), "seb304b", "理工學院 B棟 B304 教室-後門"),
+            CustomPoint(LatLng(72.44236755371094, 52.07304382324219), "seb305", "理工學院 B棟 B305 教室"),
+            CustomPoint(LatLng(70.57686614990234, 54.260643005371094), "seb306", "理工學院 B棟 B306 教室"),
+            CustomPoint(LatLng(65.37165832519531, 55.534786224365234), "seb307", "理工學院 B棟 B307 教室"),
+            CustomPoint(LatLng(61.777889251708984, 56.537288665771484), "seb308", "理工學院 B棟 B308 教室"),
+            CustomPoint(LatLng(55.474735260009766, 58.4857292175293), "seb309", "理工學院 B棟 B309 教室"),
+            CustomPoint(LatLng(51.31575012207031, 59.25801467895508), "seb310", "理工學院 B棟 B310 教室"),
+
+            // B棟教室 - 第四層
+            CustomPoint(LatLng(21.5928897857666, 45.721649169921875), "seb401", "理工學院 B棟 B401 教室"),
+            CustomPoint(LatLng(34.64710235595703, 63.057010650634766), "seb402f", "理工學院 B棟 B402 教室-前門"),
+            CustomPoint(LatLng(23.973342895507812, 62.98015213012695), "seb402b", "理工學院 B棟 B402 教室-後門"),
+            CustomPoint(LatLng(50.87617111206055, 62.87931823730469), "seb403f", "理工學院 B棟 B403 教室-前門"),
+            CustomPoint(LatLng(64.64363098144531, 63.14189529418945), "seb403b", "理工學院 B棟 B403 教室-後門"),
+            CustomPoint(LatLng(67.83889770507812, 63.20636749267578), "seb404f", "理工學院 B棟 B404 教室-前門"),
+            CustomPoint(LatLng(76.18531799316406, 63.21170425415039), "seb405", "理工學院 B棟 B405 教室"),
+            CustomPoint(LatLng(90.3544692993164, 63.158546447753906), "seb406", "理工學院 B棟 B406 教室"),
+            CustomPoint(LatLng(88.89725494384766, 68.37963104248047), "seb407", "理工學院 B棟 B407 教室"),
+            CustomPoint(LatLng(85.19001770019531, 68.35755920410156), "seb408", "理工學院 B棟 B408 教室"),
+            CustomPoint(LatLng(80.58969116210938, 68.43694305419922), "seb409", "理工學院 B棟 B409 教室"),
+            CustomPoint(LatLng(76.52371215820312, 68.52718353271484), "seb410", "理工學院 B棟 B410 教室"),
+            CustomPoint(LatLng(71.66710662841797, 68.64998626708984), "seb411", "理工學院 B棟 B411 教室"),
+            CustomPoint(LatLng(67.24075317382812, 68.6009521484375), "seb412", "理工學院 B棟 B412 教室"),
+            CustomPoint(LatLng(63.010520935058594, 68.58194732666016), "seb413", "理工學院 B棟 B413 教室"),
+            CustomPoint(LatLng(58.46512985229492, 68.32197570800781), "seb414", "理工學院 B棟 B414 教室"),
+            CustomPoint(LatLng(54.223899841308594, 68.60690307617188), "seb415", "理工學院 B棟 B415 教室"),
+            CustomPoint(LatLng(49.79465103149414, 68.3743667602539), "seb416", "理工學院 B棟 B416 教室"),
+
+            // A棟教室 - 第一層
+            CustomPoint(LatLng(13.271364212036133, 36.39988708496094), "sea101", "理工學院 A棟 A101 教室"),
+            CustomPoint(LatLng(20.14449119567871, 29.89427947998047), "sea102", "理工學院 A棟 A102 教室"),
+            CustomPoint(LatLng(23.82387924194336, 28.580760955810547), "sea103f", "理工學院 A棟 A103 教室-前門"),
+            CustomPoint(LatLng(31.046024322509766, 24.88923454284668), "sea103b", "理工學院 A棟 A103 教室-後門"),
+            CustomPoint(LatLng(36.26740646362305, 22.947391510009766), "sea104", "理工學院 A棟 A104 教室"),
+            CustomPoint(LatLng(37.82120895385742, 21.650352478027344), "sea105f", "理工學院 A棟 A105 教室-前門"),
+            CustomPoint(LatLng(44.940452575683594, 17.87058448791504), "sea105b", "理工學院 A棟 A105 教室-後門"),
+            CustomPoint(LatLng(45.88531494140625, 20.238454818725586), "sea108", "理工學院 A棟 A108 教室"),
+            CustomPoint(LatLng(43.92074203491211, 21.35620880126953), "sea109", "理工學院 A棟 A109 教室"),
+            CustomPoint(LatLng(41.63809585571289, 22.31218147277832), "sea110", "理工學院 A棟 A110 教室"),
+            CustomPoint(LatLng(39.233829498291016, 23.429933547973633), "sea111", "理工學院 A棟 A111 教室"),
+            CustomPoint(LatLng(37.269256591796875, 24.95948600769043), "sea112", "理工學院 A棟 A112 教室"),
+            CustomPoint(LatLng(35.183067321777344, 26.106653213500977), "sea113", "理工學院 A棟 A113 教室"),
+            CustomPoint(LatLng(32.68525314331055, 27.297943115234375), "sea114", "理工學院 A棟 A114 教室"),
+            CustomPoint(LatLng(30.392396926879883, 28.55086326599121), "sea115", "理工學院 A棟 A115 教室"),
+            CustomPoint(LatLng(25.676191329956055, 31.022167205810547), "sea116f", "理工學院 A棟 A116 教室-前門"),
+            CustomPoint(LatLng(29.146940231323242, 29.036685943603516), "sea116b", "理工學院 A棟 A116 教室-後門"),
+
+            // A棟教室 - 第二層
+            CustomPoint(LatLng(27.1607608795166, 42.274879455566406), "sea201f", "理工學院 A棟 A201 教室-前門"),
+            CustomPoint(LatLng(20.86558723449707, 35.70256805419922), "sea201b", "理工學院 A棟 A201 教室-後門"),
+            CustomPoint(LatLng(31.67758560180664, 33.307857513427734), "sea202f", "理工學院 A棟 A202 教室-前門"),
+            CustomPoint(LatLng(27.556201934814453, 28.596010208129883), "sea202b", "理工學院 A棟 A202 教室-後門"),
+            CustomPoint(LatLng(33.855525970458984, 31.27509307861328), "sea203", "理工學院 A棟 A203 教室"),
+            CustomPoint(LatLng(40.25783920288086, 29.962125778198242), "sea205f", "理工學院 A棟 A205 教室-前門"),
+            CustomPoint(LatLng(47.55054473876953, 26.998550415039062), "sea205b", "理工學院 A棟 A205 教室-後門"),
+            CustomPoint(LatLng(56.841922760009766, 22.890857696533203), "sea206", "理工學院 A棟 A206 教室"),
+            CustomPoint(LatLng(49.520687103271484, 26.285371780395508), "sea207", "理工學院 A棟 A207 教室"),
+            CustomPoint(LatLng(66.3443603515625, 18.83325958251953), "sea208", "理工學院 A棟 A208 教室"),
+            CustomPoint(LatLng(65.09033203125, 21.877511978149414), "sea209f", "理工學院 A棟 A209 教室-前門"),
+            CustomPoint(LatLng(69.5364990234375, 19.88665771484375), "sea209b", "理工學院 A棟 A209 教室-後門"),
+            CustomPoint(LatLng(55.68429946899414, 26.140832901000977), "sea210", "理工學院 A棟 A210 教室"),
+            CustomPoint(LatLng(53.34721755981445, 27.174074172973633), "sea211", "理工學院 A棟 A211 教室"),
+            CustomPoint(LatLng(46.120418548583984, 29.976346969604492), "sea212f", "理工學院 A棟 A212 教室-前門"),
+            CustomPoint(LatLng(51.6373291015625, 27.7109317779541), "sea212b", "理工學院 A棟 A212 教室-後門"),
+            CustomPoint(LatLng(43.79401397705078, 31.042348861694336), "sea213", "理工學院 A棟 A213 教室"),
+            CustomPoint(LatLng(36.56644058227539, 34.33987808227539), "sea214f", "理工學院 A棟 A214 教室-前門"),
+            CustomPoint(LatLng(42.440189361572266, 31.73285675048828), "sea214b", "理工學院 A棟 A214 教室-後門"),
+
+            // A棟教室 - 第三層
+            CustomPoint(LatLng(24.581771850585938, 41.899017333984375), "sea301", "理工學院 A棟 A301 教室"),
+            CustomPoint(LatLng(23.275197982788086, 40.36946105957031), "sea302", "理工學院 A棟 A302 教室"),
+            CustomPoint(LatLng(27.713125228881836, 31.877595901489258), "sea303", "理工學院 A棟 A303 教室"),
+            CustomPoint(LatLng(26.018539428710938, 30.26356315612793), "sea304", "理工學院 A棟 A304 教室"),
+            CustomPoint(LatLng(35.209068298339844, 33.56096267700195), "sea305", "理工學院 A棟 A305 教室"),
+            CustomPoint(LatLng(38.05083465576172, 30.929719924926758), "sea306f", "理工學院 A棟 A306 教室-前門"),
+            CustomPoint(LatLng(45.727378845214844, 27.683198928833008), "sea306b", "理工學院 A棟 A306 教室-後門"),
+            CustomPoint(LatLng(47.18032455444336, 26.25664520263672), "sea307f", "理工學院 A棟 A307 教室-前門"),
+            CustomPoint(LatLng(54.789608001708984, 23.008777618408203), "sea307b", "理工學院 A棟 A307 教室-後門"),
+            CustomPoint(LatLng(49.793701171875, 29.087871551513672), "sea308f", "理工學院 A棟 A308 教室-前門"),
+            CustomPoint(LatLng(57.01210403442383, 25.17099952697754), "sea308b", "理工學院 A棟 A308 教室-後門"),
+            CustomPoint(LatLng(47.17616653442383, 29.784103393554688), "sea309", "理工學院 A棟 A309 教室"),
+            CustomPoint(LatLng(44.8295783996582, 30.743545532226562), "sea310", "理工學院 A棟 A310 教室"),
+            CustomPoint(LatLng(42.69187927246094, 31.959978103637695), "sea311", "理工學院 A棟 A311 教室"),
+            CustomPoint(LatLng(40.43357849121094, 33.15655517578125), "sea312", "理工學院 A棟 A312 教室"),
+            CustomPoint(LatLng(38.3000373840332, 34.225830078125), "sea313", "理工學院 A棟 A313 教室"),
+            CustomPoint(LatLng(35.98874282836914, 35.208709716796875), "sea314", "理工學院 A棟 A314 教室"),
+            CustomPoint(LatLng(63.525413513183594, 19.030677795410156), "sea315", "理工學院 A棟 A315 教室"),
+            CustomPoint(LatLng(62.77527618408203, 22.467670440673828), "sea316f", "理工學院 A棟 A316 教室-前門"),
+            CustomPoint(LatLng(67.33075714111328, 20.421546936035156), "sea316b", "理工學院 A棟 A316 教室-後門"),
+
+            // A棟教室 - 第四層
+            CustomPoint(LatLng(15.417096138000488, 64.93428802490234), "sea401", "理工學院 A棟 A401 教室"),
+            CustomPoint(LatLng(30.550701141357422, 58.46754455566406), "sea403f", "理工學院 A棟 A403 教室-前門"),
+            CustomPoint(LatLng(29.9885311126709, 43.00105285644531), "sea404f", "理工學院 A棟 A404 教室-前門"),
+            CustomPoint(LatLng(37.372188568115234, 59.67949676513672), "sea407f", "理工學院 A棟 A407 教室-前門"),
+            CustomPoint(LatLng(52.95795822143555, 58.89101028442383), "sea407b", "理工學院 A棟 A407 教室-後門"),
+            CustomPoint(LatLng(56.526554107666016, 59.51247787475586), "sea408f", "理工學院 A棟 A408 教室-前門"),
+            CustomPoint(LatLng(71.50880432128906, 59.18362808227539), "sea408b", "理工學院 A棟 A408 教室-後門"),
+            CustomPoint(LatLng(86.63111114501953, 59.327239990234375), "sea409", "理工學院 A棟 A409 教室"),
+            CustomPoint(LatLng(88.79692840576172, 65.49458312988281), "sea410", "理工學院 A棟 A410 教室"),
+            CustomPoint(LatLng(85.3043441772461, 76.60122680664062), "sea411", "理工學院 A棟 A411 教室"),
+            CustomPoint(LatLng(81.53604888916016, 65.26834106445312), "sea412", "理工學院 A棟 A412 教室"),
+            CustomPoint(LatLng(70.07524108886719, 65.33300018310547), "sea413", "理工學院 A棟 A413 教室"),
+            CustomPoint(LatLng(58.54875946044922, 66.65852355957031), "sea414f", "理工學院 A棟 A414 教室-前門"),
+            CustomPoint(LatLng(68.06903839111328, 66.29591369628906), "sea414b", "理工學院 A棟 A414 教室-後門"),
+            CustomPoint(LatLng(51.43730545043945, 65.38606262207031), "sea415f", "理工學院 A棟 A415 教室-前門"),
+            CustomPoint(LatLng(47.144500732421875, 65.1932601928711), "sea416", "理工學院 A棟 A416 教室"),
+            CustomPoint(LatLng(35.862728118896484, 65.26189422607422), "sea417f", "理工學院 A棟 A417 教室-前門"),
+
+            // A棟教室 - 第五層
+            CustomPoint(LatLng(25.605928421020508, 61.12555694580078), "sea501", "理工學院 A棟 A501 教室"),
+            CustomPoint(LatLng(32.16361999511719, 61.97163391113281), "sea504", "理工學院 A棟 A504 教室"),
+            CustomPoint(LatLng(39.7947883605957, 62.2108154296875), "sea505f", "理工學院 A棟 A505 教室-前門"),
+            CustomPoint(LatLng(48.8352165222168, 61.818050384521484), "sea505b", "理工學院 A棟 A505 教室-後門"),
+            CustomPoint(LatLng(52.54081344604492, 61.628456115722656), "sea507f", "理工學院 A棟 A507 教室-前門"),
+            CustomPoint(LatLng(62.16032409667969, 63.765411376953125), "sea507b", "理工學院 A棟 A507 教室-後門"),
+            CustomPoint(LatLng(64.42755889892578, 61.895572662353516), "sea509", "理工學院 A棟 A509 教室"),
+            CustomPoint(LatLng(85.91199493408203, 62.81660079956055), "sea510", "理工學院 A棟 A510 教室"),
+            CustomPoint(LatLng(68.2611083984375, 69.04708862304688), "sea511", "理工學院 A棟 A511 教室"),
+            CustomPoint(LatLng(64.34971618652344, 69.04093170166016), "sea512", "理工學院 A棟 A512 教室"),
+            CustomPoint(LatLng(52.15821838378906, 71.19689178466797), "sea513f", "理工學院 A棟 A513 教室-前門"),
+            CustomPoint(LatLng(62.26993942260742, 71.58380126953125), "sea513b", "理工學院 A棟 A513 教室-後門"),
+            CustomPoint(LatLng(48.095272064208984, 69.49008178710938), "sea514", "理工學院 A棟 A514 教室"),
+            CustomPoint(LatLng(35.585914611816406, 71.01056671142578), "sea515f", "理工學院 A棟 A515 教室-前門"),
+            CustomPoint(LatLng(45.7668571472168, 71.31716918945312), "sea515b", "理工學院 A棟 A515 教室-後門"),
+            CustomPoint(LatLng(31.434926986694336, 69.18673706054688), "sea516", "理工學院 A棟 A516 教室")
+        )
         listOf(
             CustomPoint(LatLng(22.73881963044863, 121.06574371741712), "理工學院A棟入口", "臺東大學理工學院A棟，設有多間專業教學研究實驗室與系所辦公室，提供師生學習與科研環境。"),
             CustomPoint(LatLng(22.7384658854431, 121.06639817640176), "理工學院B棟入口", "B 棟主要集合與資訊科技、綠能科技、應用數學等理工相關科系的教學與研究空間，教學設施與系辦公室齊備，有利於跨領域合作與科技應用課程的推動。"),
@@ -387,10 +658,10 @@ fun MapScreen(navController: NavHostController) {
                                     onValueChange = {
                                         destText = it
                                         destSelection = null
-                                        destExpanded = it.isNotBlank()
+                                        destExpanded = true // 總是顯示建議列表
                                         customPoints.firstOrNull { cp -> cp.name.equals(it, true) }?.let { cp -> destSelection = cp.location }
                                     },
-                                    placeholder = { Text("目的地") },
+                                    placeholder = { Text("輸入教室編號或地點名稱（如：SEC101、體育館）") },
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(54.dp)
@@ -407,25 +678,106 @@ fun MapScreen(navController: NavHostController) {
                                         modifier = Modifier
                                             .width(with(LocalDensity.current) { destFieldWidth.toDp() })
                                             .padding(top = 55.dp)
-                                            .heightIn(max = 200.dp)
+                                            .heightIn(max = 300.dp)
                                             .zIndex(3f),
                                         shape = RoundedCornerShape(12.dp),
                                         colors = CardDefaults.cardColors(containerColor = Color(0xFF87CEFA).copy(alpha = 0.15f))
                                     ) {
-                                        val destSuggestions = if (destText.isBlank()) customPoints else customPoints.filter { it.name.contains(destText, true) }
+                                        // 分離教室和其他地點
+                                        val locations = customPoints.filter { !it.name.startsWith("se", true) }
+                                        val classrooms = customPoints.filter { it.name.startsWith("se", true) }
+
+                                        // 過濾搜尋結果
+                                        val filteredLocations = if (destText.isBlank()) locations else {
+                                            locations.filter { 
+                                                it.name.contains(destText, true) || 
+                                                it.description.contains(destText, true) 
+                                            }
+                                        }
+                                        val filteredClassrooms = if (destText.isBlank()) classrooms else {
+                                            classrooms.filter {
+                                                it.name.contains(destText, true) ||
+                                                it.description.contains(destText, true)
+                                            }
+                                        }
+
                                         LazyColumn {
-                                            items(destSuggestions) { cp ->
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .clickable {
-                                                            destText = cp.name
-                                                            destSelection = cp.location
-                                                            destExpanded = false
+                                            // 顯示教室
+                                            if (filteredClassrooms.isNotEmpty()) {
+                                                item {
+                                                    Text(
+                                                        text = "教室清單",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                                        color = Color.Gray
+                                                    )
+                                                }
+                                                items(filteredClassrooms) { cp ->
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .clickable {
+                                                                destText = cp.name.uppercase()
+                                                                destSelection = cp.location
+                                                                destExpanded = false
+                                                            }
+                                                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                                                    ) {
+                                                        Column {
+                                                            Text(
+                                                                // 轉換教室編號格式，例如：將 "sec101" 轉換為 "理工C101"
+                                                                text = when {
+                                                                    cp.name.startsWith("sea", true) -> "理工A" + cp.name.substring(3).uppercase()
+                                                                    cp.name.startsWith("seb", true) -> "理工B" + cp.name.substring(3).uppercase()
+                                                                    cp.name.startsWith("sec", true) -> "理工C" + cp.name.substring(3).uppercase()
+                                                                    else -> cp.name.uppercase()
+                                                                },
+                                                                style = MaterialTheme.typography.bodyMedium
+                                                            )
+                                                            if (cp.name.endsWith("f") || cp.name.endsWith("b")) {
+                                                                Text(
+                                                                    text = if (cp.name.endsWith("f")) "前門" else "後門",
+                                                                    style = MaterialTheme.typography.bodySmall,
+                                                                    color = Color.Gray
+                                                                )
+                                                            }
                                                         }
-                                                        .padding(horizontal = 12.dp, vertical = 10.dp)
-                                                ) {
-                                                    Text(text = cp.name)
+                                                    }
+                                                }
+                                            }
+
+                                            // 顯示其他地點
+                                            if (filteredLocations.isNotEmpty()) {
+                                                item {
+                                                    if (filteredClassrooms.isNotEmpty()) {
+                                                        Divider(
+                                                            modifier = Modifier.padding(vertical = 8.dp),
+                                                            color = Color.Gray.copy(alpha = 0.3f)
+                                                        )
+                                                    }
+                                                    Text(
+                                                        text = "校園地點",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                                        color = Color.Gray
+                                                    )
+                                                }
+                                                items(filteredLocations) { cp ->
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .clickable {
+                                                                destText = cp.name
+                                                                destSelection = cp.location
+                                                                destExpanded = false
+                                                            }
+                                                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = cp.name,
+                                                            style = MaterialTheme.typography.bodyMedium
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
