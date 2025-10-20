@@ -117,7 +117,7 @@ fun MapScreen(navController: NavHostController) {
             CustomPoint(LatLng(64.7601547241211, 81.7297134399414), "sec107f", "理工學院 C棟 C107 教室-前門"),
             CustomPoint(LatLng(71.50485229492188, 81.60088348388672), "sec107b", "理工學院 C棟 C107 教室-後門"),
             CustomPoint(LatLng(60.943782806396484, 81.4974594116211), "sec108", "理工學院 C棟 C108 教室"),
-            
+
             // C棟教室 - 第二層
             CustomPoint(LatLng(60.36102294921875, 83.49526977539062), "sec201", "理工學院 C棟 C201 教室"),
             CustomPoint(LatLng(66.22871398925781, 83.43477630615234), "sec202", "理工學院 C棟 C202 教室"),
@@ -140,7 +140,7 @@ fun MapScreen(navController: NavHostController) {
             CustomPoint(LatLng(87.96910858154297, 83.68539428710938), "sec219f", "理工學院 C棟 C219 教室-前門"),
             CustomPoint(LatLng(93.48053741455078, 83.66523742675781), "sec219b", "理工學院 C棟 C219 教室-後門"),
             CustomPoint(LatLng(87.40264892578125, 85.75760650634766), "sec221", "理工學院 C棟 C221 教室"),
-            
+
             // C棟教室 - 第三層
             CustomPoint(LatLng(37.122840881347656, 82.91508483886719), "sec313", "理工學院 C棟 C313 教室"),
             CustomPoint(LatLng(37.010528564453125, 84.51817321777344), "sec312", "理工學院 C棟 C312 教室"),
@@ -658,14 +658,17 @@ fun MapScreen(navController: NavHostController) {
                                     onValueChange = {
                                         destText = it
                                         destSelection = null
-                                        destExpanded = true // 總是顯示建議列表
-                                        customPoints.firstOrNull { cp -> cp.name.equals(it, true) }?.let { cp -> destSelection = cp.location }
+                                        destExpanded = true
                                     },
-                                    placeholder = { Text("輸入教室編號或地點名稱（如：SEC101、體育館）") },
+                                    placeholder = { Text("輸入教室編號（如：C101、理工C101）或地點名稱") },
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(54.dp)
-                                        .clickable { destExpanded = true }
+                                        .onFocusChanged {
+                                            if (it.isFocused) {
+                                                destExpanded = true
+                                            }
+                                        }
                                         .onGloballyPositioned { coordinates -> destFieldWidth = coordinates.size.width },
                                     singleLine = true,
                                     leadingIcon = { Icon(Icons.Default.Place, contentDescription = "目的地", tint = Color(0xFF87CEFA)) },
@@ -683,27 +686,68 @@ fun MapScreen(navController: NavHostController) {
                                         shape = RoundedCornerShape(12.dp),
                                         colors = CardDefaults.cardColors(containerColor = Color(0xFF87CEFA).copy(alpha = 0.15f))
                                     ) {
+                                        val searchText = destText.trim()
                                         // 分離教室和其他地點
                                         val locations = customPoints.filter { !it.name.startsWith("se", true) }
                                         val classrooms = customPoints.filter { it.name.startsWith("se", true) }
 
-                                        // 過濾搜尋結果
-                                        val filteredLocations = if (destText.isBlank()) locations else {
-                                            locations.filter { 
-                                                it.name.contains(destText, true) || 
-                                                it.description.contains(destText, true) 
-                                            }
+                                        // 過濾搜尋結果，支援多種輸入格式
+                                        fun normalizeInput(input: String): String {
+                                            return input.replace(Regex("[^a-zA-Z0-9]"), "").lowercase()
                                         }
-                                        val filteredClassrooms = if (destText.isBlank()) classrooms else {
-                                            classrooms.filter {
-                                                it.name.contains(destText, true) ||
-                                                it.description.contains(destText, true)
+
+                                        fun formatClassroomName(name: String): String {
+                                            return when {
+                                                name.startsWith("sea", true) -> {
+                                                    val number = name.substring(3).uppercase()
+                                                    "理工 A${number.replace(Regex("(\\d+)"), " $1 ").trim()}"
+                                                }
+                                                name.startsWith("seb", true) -> {
+                                                    val number = name.substring(3).uppercase()
+                                                    "理工 B${number.replace(Regex("(\\d+)"), " $1 ").trim()}"
+                                                }
+                                                name.startsWith("sec", true) -> {
+                                                    val number = name.substring(3).uppercase()
+                                                    "理工 C${number.replace(Regex("(\\d+)"), " $1 ").trim()}"
+                                                }
+                                                else -> name.uppercase()
                                             }
                                         }
 
+                                        fun matchesClassroom(classroom: CustomPoint, query: String): Boolean {
+                                            if (query.isBlank()) return true
+
+                                            val normalizedQuery = normalizeInput(query)
+                                            val normalizedName = normalizeInput(classroom.name)
+                                            val displayName = formatClassroomName(classroom.name).lowercase()
+
+                                            // 支援多種搜尋格式：
+                                            return when {
+                                                // 1. 完整編號 (sec101)
+                                                normalizedName.contains(normalizedQuery) -> true
+                                                // 2. 簡化編號 (c101) - 檢查字母和數字
+                                                normalizedName.substring(3).contains(normalizedQuery) -> true
+                                                // 3. 中文搜尋 (理工c101)
+                                                displayName.contains(query.lowercase()) -> true
+                                                // 4. 純數字 (101) - 只比對數字部分
+                                                normalizedQuery.all { it.isDigit() } &&
+                                                        normalizedName.contains(normalizedQuery) -> true
+                                                // 5. 檢查描述
+                                                classroom.description.contains(query, true) -> true
+                                                else -> false
+                                            }
+                                        }
+
+                                        val filteredLocations = locations.filter {
+                                            searchText.isBlank() ||
+                                                    it.name.contains(searchText, true) ||
+                                                    it.description.contains(searchText, true)
+                                        }
+                                        val filteredClassrooms = classrooms.filter { matchesClassroom(it, searchText) }
+
                                         LazyColumn {
                                             // 顯示教室
-                                            if (filteredClassrooms.isNotEmpty()) {
+                                            if (filteredClassrooms.isNotEmpty() || searchText.isBlank()) {
                                                 item {
                                                     Text(
                                                         text = "教室清單",
@@ -712,12 +756,12 @@ fun MapScreen(navController: NavHostController) {
                                                         color = Color.Gray
                                                     )
                                                 }
-                                                items(filteredClassrooms) { cp ->
+                                                items(if (searchText.isBlank()) classrooms else filteredClassrooms) { cp ->
                                                     Row(
                                                         modifier = Modifier
                                                             .fillMaxWidth()
                                                             .clickable {
-                                                                destText = cp.name.uppercase()
+                                                                destText = formatClassroomName(cp.name)
                                                                 destSelection = cp.location
                                                                 destExpanded = false
                                                             }
@@ -725,13 +769,7 @@ fun MapScreen(navController: NavHostController) {
                                                     ) {
                                                         Column {
                                                             Text(
-                                                                // 轉換教室編號格式，例如：將 "sec101" 轉換為 "理工C101"
-                                                                text = when {
-                                                                    cp.name.startsWith("sea", true) -> "理工A" + cp.name.substring(3).uppercase()
-                                                                    cp.name.startsWith("seb", true) -> "理工B" + cp.name.substring(3).uppercase()
-                                                                    cp.name.startsWith("sec", true) -> "理工C" + cp.name.substring(3).uppercase()
-                                                                    else -> cp.name.uppercase()
-                                                                },
+                                                                text = formatClassroomName(cp.name),
                                                                 style = MaterialTheme.typography.bodyMedium
                                                             )
                                                             if (cp.name.endsWith("f") || cp.name.endsWith("b")) {
@@ -741,6 +779,11 @@ fun MapScreen(navController: NavHostController) {
                                                                     color = Color.Gray
                                                                 )
                                                             }
+                                                            Text(
+                                                                text = cp.description,
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                                color = Color.Gray
+                                                            )
                                                         }
                                                     }
                                                 }
