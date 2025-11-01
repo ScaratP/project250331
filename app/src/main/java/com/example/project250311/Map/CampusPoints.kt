@@ -1,5 +1,6 @@
 package com.example.project250311.Map
 
+import com.example.project250311.Map.data.CustomPoint
 import com.google.android.gms.maps.model.LatLng
 
 /**

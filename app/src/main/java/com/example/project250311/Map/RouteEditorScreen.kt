@@ -42,6 +42,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
+import com.example.project250311.Map.data.CustomPoint
 import com.google.android.gms.location.*
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
@@ -733,8 +734,11 @@ fun RouteEditorScreen(
                                 }
                                 
                                 Spacer(modifier = Modifier.width(8.dp))
-                                
-                                selectedCampusPoint?.let { point ->
+
+                                val point = selectedCampusPoint
+
+                                // 使用 if 判斷式來有條件地顯示 Composable
+                                if (point != null) {
                                     Button(onClick = {
                                         addCampusPointToRoute(point)
                                         showCampusPointsDialog = false
