@@ -53,6 +53,7 @@ import com.google.android.gms.maps.model.Dot
 import com.google.android.gms.maps.model.Gap
 import com.google.android.gms.maps.model.PatternItem
 import com.example.project250311.Map.data.CustomPoint
+import com.example.project250311.Map.data.SEEntrances
 
 // 使用 data/CustomPoint.kt 中的定義，移除本地定義
 /*
@@ -677,11 +678,101 @@ fun drawRoute(
         return
     }
     onStart()
-    val o = "${origin.latitude},${origin.longitude}"
-    val d = "${dest.latitude},${dest.longitude}"
-    RetrofitInstance.api.getDirections(origin = o, destination = d, mode = "walking", apiKey = "AIzaSyDj1CTmLJMsvCTRwwVJrCFHp6Cqt7wVKp8")
-        .enqueue(object : Callback<com.example.project250311.Map.model.DirectionsResponse> {
-            override fun onResponse(call: Call<com.example.project250311.Map.model.DirectionsResponse>, response: Response<com.example.project250311.Map.model.DirectionsResponse>) {
+
+
+// 需要 import com.example.project250311.Map.data.SEClassrooms
+    val allPoints = com.example.project250311.Map.data.SEClassrooms.allClassrooms
+
+// 檢查目的地是否在理工學院內
+// 然後在 allPoints (而不是 customPoints) 上執行 .find
+    val isDestInSE = allPoints.find { it.location == dest }?.name?.startsWith("SE") == true
+
+// 如果目的地在理工學院內，找到最近的出入口作為中間點
+    val waypoint = if (isDestInSE) {
+        val destCode = allPoints.find { it.location == dest }?.name ?: ""
+        SEEntrances.getNearestEntrance(destCode) // 假設 SEEntrances 是可存取的
+    } else null
+
+    // 如果有中間點，先導航到中間點
+    if (waypoint != null) {
+        val o = "${origin.latitude},${origin.longitude}"
+        val w = "${waypoint.location.latitude},${waypoint.location.longitude}"
+        val d = "${dest.latitude},${dest.longitude}"
+        
+        // 先取得到出入口的路線
+        RetrofitInstance.api.getDirections(
+            origin = o, 
+            destination = w, 
+            mode = "walking", 
+            apiKey = "AIzaSyDj1CTmLJMsvCTRwwVJrCFHp6Cqt7wVKp8"
+        ).enqueue(object : Callback<com.example.project250311.Map.model.DirectionsResponse> {
+            override fun onResponse(
+                call: Call<com.example.project250311.Map.model.DirectionsResponse>,
+                response: Response<com.example.project250311.Map.model.DirectionsResponse>
+            ) {
+                if (response.isSuccessful) {
+                    val body = response.body()
+                    val route1 = body?.routes?.firstOrNull()
+                    val points1 = route1?.overview_polyline?.points
+                    val duration1 = route1?.legs?.firstOrNull()?.duration?.text ?: "未知時間"
+
+                    // 再取得從出入口到目的地的路線
+                    RetrofitInstance.api.getDirections(
+                        origin = w,
+                        destination = d,
+                        mode = "walking",
+                        apiKey = "AIzaSyDj1CTmLJMsvCTRwwVJrCFHp6Cqt7wVKp8"
+                    ).enqueue(object : Callback<com.example.project250311.Map.model.DirectionsResponse> {
+                        override fun onResponse(
+                            call: Call<com.example.project250311.Map.model.DirectionsResponse>,
+                            response: Response<com.example.project250311.Map.model.DirectionsResponse>
+                        ) {
+                            if (response.isSuccessful) {
+                                val body = response.body()
+                                val route2 = body?.routes?.firstOrNull()
+                                val points2 = route2?.overview_polyline?.points
+                                val duration2 = route2?.legs?.firstOrNull()?.duration?.text ?: "未知時間"
+
+                                // 合併兩段路線
+                                if (!points1.isNullOrEmpty() && !points2.isNullOrEmpty()) {
+                                    val combinedPoints = PolylineUtils.decodePolyline(points1) + 
+                                                       PolylineUtils.decodePolyline(points2)
+                                    onSuccess(combinedPoints)
+                                    // 合併時間顯示
+                                    onTime("第一段：$duration1，第二段：$duration2")
+                                } else {
+                                    onError("無法生成完整路線")
+                                }
+                            } else {
+                                onError("第二段路線規劃失敗")
+                            }
+                        }
+                        override fun onFailure(call: Call<com.example.project250311.Map.model.DirectionsResponse>, t: Throwable) {
+                            onError("第二段路線規劃失敗：${t.message}")
+                        }
+                    })
+                } else {
+                    onError("第一段路線規劃失敗")
+                }
+            }
+            override fun onFailure(call: Call<com.example.project250311.Map.model.DirectionsResponse>, t: Throwable) {
+                onError("第一段路線規劃失敗：${t.message}")
+            }
+        })
+    } else {
+        // 如果目的地不在理工學院內，直接規劃路線
+        val o = "${origin.latitude},${origin.longitude}"
+        val d = "${dest.latitude},${dest.longitude}"
+        RetrofitInstance.api.getDirections(
+            origin = o, 
+            destination = d, 
+            mode = "walking", 
+            apiKey = "AIzaSyDj1CTmLJMsvCTRwwVJrCFHp6Cqt7wVKp8"
+        ).enqueue(object : Callback<com.example.project250311.Map.model.DirectionsResponse> {
+            override fun onResponse(
+                call: Call<com.example.project250311.Map.model.DirectionsResponse>,
+                response: Response<com.example.project250311.Map.model.DirectionsResponse>
+            ) {
                 if (response.isSuccessful) {
                     val body = response.body()
                     val route = body?.routes?.firstOrNull()
@@ -705,4 +796,5 @@ fun drawRoute(
                 onError("網路錯誤：${t.localizedMessage}")
             }
         })
+    }
 }
