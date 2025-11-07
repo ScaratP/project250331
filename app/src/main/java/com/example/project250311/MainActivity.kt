@@ -57,6 +57,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val announcementViewModel: AnnouncementViewModel by viewModels {
+        object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                val db = AppDatabase.getDatabase(applicationContext)
+                val repository = AnnouncementRepository(db.announcementDao())
+                @Suppress("UNCHECKED_CAST") return AnnouncementViewModel(repository) as T
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         createNotificationChannel(this)
@@ -113,6 +123,7 @@ class MainActivity : ComponentActivity() {
 
                         AppWithNavigation(
                             courseViewModel = courseViewModel,
+                            announcementViewModel = announcementViewModel,
                             initialDestination = startDestination,
                             userType = currentUserType ?: UserType.VISITOR
                         )
@@ -156,6 +167,7 @@ data class MainCategory(
 @Composable
 fun AppWithNavigation(
     courseViewModel: CourseViewModel,
+    announcementViewModel: AnnouncementViewModel,
     initialDestination: String = "map",
     userType: UserType = UserType.VISITOR
 ) {
@@ -301,6 +313,7 @@ fun AppWithNavigation(
             AppNavHost(
                 navController = navController,
                 courseViewModel = courseViewModel,
+                announcementViewModel = announcementViewModel,
                 initialDestination = initialDestination,
                 modifier = Modifier.fillMaxSize()
             )
@@ -398,6 +411,7 @@ fun SubMenuBottomSheet(category: MainCategory, onItemSelected: (NavigationItem) 
 fun AppNavHost(
     navController: NavHostController,
     courseViewModel: CourseViewModel,
+    announcementViewModel: AnnouncementViewModel,
     initialDestination: String = "map",
     modifier: Modifier = Modifier
 ) {
@@ -483,24 +497,6 @@ fun AppNavHost(
         composable("food") { FoodScreen() }
 
         // 這是你「新增」的 AnnouncementScreen 呼叫方式
-        composable(route = "announcement") { // <-- 路由名稱
-            // +++ 幫你補上 context +++
-            val context = LocalContext.current
-
-            // 1. 取得資料庫
-            val db = AppDatabase.getDatabase(context)
-
-            // 2. 取得「公告」的 Dao
-            val announcementDao = db.announcementDao()
-
-            // 3. 建立「公告」的 Repository
-            val repository = AnnouncementRepository(announcementDao)
-
-            // 4. 建立「公告」的 ViewModel
-            val viewModel = AnnouncementViewModel(repository)
-
-            // 5. 呼叫「公告」的 Screen
-            AnnouncementScreen(viewModel = viewModel)
-        }
+        composable(route = "announcement") { AnnouncementScreen(viewModel = announcementViewModel) }
     }
 }
