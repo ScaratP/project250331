@@ -88,12 +88,25 @@ class Converters {
     fun toLocalDateList(datesString: String?): List<LocalDate>? {
         return datesString?.split(",")?.map { LocalDate.parse(it) }
     }
+
+    //for Announcement.kt
+    @TypeConverter
+    fun fromLocalDate(date: LocalDate?): String? {
+        return date?.toString() // 例如 "2025-11-07"
+    }
+
+    @TypeConverter
+    fun toLocalDate(dateString: String?): LocalDate? {
+        return dateString?.let { LocalDate.parse(it) }
+    }
 }
 
-@Database(entities = [Schedule::class], version = 3, exportSchema = false)
+@Database(entities = [Schedule::class, Announcement::class], version = 4, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun courseDao(): CourseDao
+
+    abstract fun announcementDao(): AnnouncementDao
 
     companion object {
         @Volatile
