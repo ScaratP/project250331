@@ -33,6 +33,7 @@ import com.example.project250311.Data.CourseRepository
 import com.example.project250311.Data.CourseViewModel
 import com.example.project250311.Map.IndoorMap.IndoorMapScreen
 import com.example.project250311.Map.MapScreen
+import com.example.project250311.Onboarding.*
 import com.example.project250311.Schedule.Food.FoodScreen
 import com.example.project250311.Schedule.GetSchedule.ScheduleScreen
 import com.example.project250311.Schedule.NoSchool.LeaveSystemScreen
@@ -53,22 +54,66 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-
         super.onCreate(savedInstanceState)
         createNotificationChannel(this)
+
         setContent {
             Project250311Theme {
-                val startDestination =
-                        when {
-                            intent?.getBooleanExtra("OPEN_SCHEDULE", false) == true -> "schedule"
-                            intent?.getBooleanExtra("OPEN_LEAVE", false) == true -> "leave"
-                            else -> "map"
-                        }
+                // 檢查是否完成導覽
+                val isOnboardingDone = remember { isOnboardingCompleted(this@MainActivity) }
+                val userType = remember {
+                    if (isOnboardingDone) getUserType(this@MainActivity) else null
+                }
+                val isSetupDone = remember {
+                    if (userType == UserType.STUDENT) isStudentSetupCompleted(this@MainActivity)
+                    else true
+                }
 
-                AppWithNavigation(
-                        courseViewModel = courseViewModel,
-                        initialDestination = startDestination
-                )
+                var showOnboarding by remember { mutableStateOf(!isOnboardingDone) }
+                var showStudentSetup by remember { mutableStateOf(false) }
+                var currentUserType by remember { mutableStateOf(userType) }
+
+                when {
+                    showOnboarding -> {
+                        OnboardingScreen(
+                                onComplete = { selectedUserType ->
+                                    currentUserType = selectedUserType
+                                    showOnboarding = false
+
+                                    if (selectedUserType == UserType.STUDENT && !isSetupDone) {
+                                        showStudentSetup = true
+                                    }
+                                }
+                        )
+                    }
+                    showStudentSetup -> {
+                        StudentSetupScreen(
+                                onComplete = { wantSchedule, wantNotifications ->
+                                    showStudentSetup = false
+                                    // 不在這裡呼叫 AppWithNavigation
+                                    // 當 showStudentSetup 變為 false 時會自動進入 else 分支
+                                },
+                                onSkip = {
+                                    showStudentSetup = false
+                                }
+                        )
+                    }
+                    else -> {
+                        val startDestination =
+                                when {
+                                    intent?.getBooleanExtra("OPEN_SCHEDULE", false) == true ->
+                                            "schedule"
+                                    intent?.getBooleanExtra("OPEN_LEAVE", false) == true -> "leave"
+                                    else -> "map"
+                                }
+
+                        AppWithNavigation(
+                                courseViewModel = courseViewModel,
+                                initialDestination = startDestination,
+                                userType = currentUserType ?: UserType.VISITOR
+                        )
+                    }
+                }
             }
         }
     }
@@ -105,61 +150,86 @@ data class MainCategory(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppWithNavigation(courseViewModel: CourseViewModel, initialDestination: String = "map") {
+fun AppWithNavigation(
+        courseViewModel: CourseViewModel,
+        initialDestination: String = "map",
+        userType: UserType = UserType.VISITOR
+) {
     val navController = rememberNavController()
     var showSubMenu by remember { mutableStateOf(false) }
     var selectedCategory by remember { mutableStateOf<MainCategory?>(null) }
     val bottomSheetState = rememberModalBottomSheetState()
 
-    // 定義三個主分類及其子選項
+    // 根據用戶類型定義可用的主分類
     val mainCategories =
-            listOf(
-                    MainCategory(
-                            id = "map_category",
-                            title = "地圖",
-                            icon = Icons.Default.Map,
-                            subItems =
-                                    listOf(
-                                            NavigationItem("map", "地圖", Icons.Default.Map),
-                                            NavigationItem("indoormap", "室內地圖", Icons.Default.Star),
-                                            //                NavigationItem("route_editor", "路線編輯",
-                                            // Icons.Default.Edit),
-                                            //                NavigationItem("indoor_route_editor",
-                                            // "室內路線編輯", Icons.Default.Edit)
+            remember(userType) {
+                val mapCategory =
+                        MainCategory(
+                                id = "map_category",
+                                title = "地圖",
+                                icon = Icons.Default.Map,
+                                subItems =
+                                        listOf(
+                                                NavigationItem("map", "地圖", Icons.Default.Map),
+                                                NavigationItem(
+                                                        "indoormap",
+                                                        "室內地圖",
+                                                        Icons.Default.Star
+                                                ),
+                                        )
+                        )
+
+                val foodCategory =
+                        MainCategory(
+                                id = "food_category",
+                                title = "學餐轉盤",
+                                icon = Icons.Default.Restaurant,
+                                subItems =
+                                        listOf(
+                                                NavigationItem(
+                                                        "food",
+                                                        "學餐轉盤",
+                                                        Icons.Default.Restaurant
+                                                )
+                                        )
+                        )
+
+                // 學生模式才有課表分類
+                if (userType == UserType.STUDENT) {
+                    val scheduleCategory =
+                            MainCategory(
+                                    id = "schedule_category",
+                                    title = "課表",
+                                    icon = Icons.Default.CalendarToday,
+                                    subItems =
+                                            listOf(
+                                                    NavigationItem(
+                                                            "schedule",
+                                                            "課表",
+                                                            Icons.Default.CalendarToday
+                                                    ),
+                                                    NavigationItem(
+                                                            "leave",
+                                                            "請假系統",
+                                                            Icons.Default.ExitToApp
+                                                    ),
+                                                    NavigationItem(
+                                                            "notes",
+                                                            "筆記",
+                                                            Icons.Default.Note
+                                                    ),
+                                                    NavigationItem(
+                                                            "notice",
+                                                            "通知",
+                                                            Icons.Default.Notifications
+                                                    )
                                             )
-                    ),
-                    MainCategory(
-                            id = "schedule_category",
-                            title = "課表",
-                            icon = Icons.Default.CalendarToday,
-                            subItems =
-                                    listOf(
-                                            NavigationItem(
-                                                    "schedule",
-                                                    "課表",
-                                                    Icons.Default.CalendarToday
-                                            ),
-                                            NavigationItem(
-                                                    "leave",
-                                                    "請假系統",
-                                                    Icons.Default.ExitToApp
-                                            ),
-                                            NavigationItem("notes", "筆記", Icons.Default.Note),
-                                            NavigationItem(
-                                                    "notice",
-                                                    "通知",
-                                                    Icons.Default.Notifications
-                                            )
-                                    )
-                    ),
-                    MainCategory(
-                            id = "food_category",
-                            title = "學餐轉盤",
-                            icon = Icons.Default.Restaurant,
-                            subItems =
-                                    listOf(NavigationItem("food", "學餐轉盤", Icons.Default.Restaurant))
-                    )
-            )
+                            )
+                    listOf(mapCategory, scheduleCategory, foodCategory)
+                } else {
+                    listOf(mapCategory, foodCategory)
+                }
+            }
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route?.split("/")?.firstOrNull()
@@ -332,7 +402,7 @@ fun AppNavHost(
                         )
         ) { backStackEntry ->
             val destination = backStackEntry.arguments?.getString("destination") ?: ""
-            IndoorMapScreen(modifier= Modifier)
+            IndoorMapScreen(modifier = Modifier)
         }
 
         // 課表畫面
