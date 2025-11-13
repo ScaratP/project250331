@@ -32,9 +32,14 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.Image
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
+import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import com.example.project250311.Map.network.RetrofitInstance
 import com.example.project250311.Map.utils.PolylineUtils
@@ -54,10 +59,10 @@ import com.google.android.gms.maps.model.Gap
 import com.google.android.gms.maps.model.PatternItem
 import com.example.project250311.Map.data.CustomPoint
 import com.example.project250311.Map.data.SEEntrances
+import com.example.project250311.Map.IndoorMap.Database.IndoorMapDatabase
+import kotlinx.coroutines.flow.first
 
-// 使用 data/CustomPoint.kt 中的定義，移除本地定義
-/*
-*/
+
 
 @SuppressLint("MissingPermission")
 @Composable
@@ -85,6 +90,12 @@ fun MapScreen(navController: NavHostController) {
     var errorMsg by remember { mutableStateOf<String?>(null) }
     var selectedPoint by remember { mutableStateOf<CustomPoint?>(null) }
     var travelTimeText by remember { mutableStateOf<String?>(null) }
+    // 室內地圖顯示狀態與資源 id (0 = 無)
+    var indoorResId by remember { mutableStateOf(0) }
+    var showIndoorMap by remember { mutableStateOf(false) }
+    // Pending indoor navigation params (set after resolving classroom -> building/floor/entry)
+    data class IndoorNavParams(val buildingId: String, val floorId: Int, val targetPointId: String, val entryPointId: String?)
+    var pendingIndoorParams by remember { mutableStateOf<IndoorNavParams?>(null) }
 
     // Search UI states
     var searchExpanded by remember { mutableStateOf(false) }
@@ -222,6 +233,17 @@ fun MapScreen(navController: NavHostController) {
         }
     }
 
+    // Helper: 由 classroom 名稱嘗試取得 drawable 資源 id（使用多種命名猜測）
+    fun findIndoorMapResId(context: Context, pointName: String): Int {
+        val normalized = pointName.lowercase().replace(Regex("[^a-z0-9]"), "")
+        val candidates = listOf("se_$normalized", normalized, "classroom_$normalized")
+        for (c in candidates) {
+            val id = context.resources.getIdentifier(c, "drawable", context.packageName)
+            if (id != 0) return id
+        }
+        return 0
+    }
+
     // 8. Map 畫面
     Box(modifier = Modifier.fillMaxSize()) {
         GoogleMap(
@@ -269,6 +291,12 @@ fun MapScreen(navController: NavHostController) {
             customPoints.forEach { custom ->
                 Marker(state = MarkerState(custom.location), title = custom.name, icon = getResizedBitmapDescriptor(context, R.drawable.marker, 80, 80), onClick = {
                     selectedPoint = custom
+                    // 當點擊 Marker 時，如果是教室則預先解析室內圖資源 id 以便顯示按鈕
+                    if (custom.name.startsWith("se", true)) {
+                        indoorResId = findIndoorMapResId(context, custom.name)
+                    } else {
+                        indoorResId = 0
+                    }
                     false
                 })
             }
@@ -560,6 +588,61 @@ fun MapScreen(navController: NavHostController) {
                                         )
 
                                         cameraState.move(CameraUpdateFactory.newLatLng(originLatLng))
+
+                                        // 如果目的地為教室，嘗試找室內點與入口（非同步）
+                                        scope.launch {
+                                            try {
+                                                val db = IndoorMapDatabase.getDatabase(context)
+                                                val refDao = db.referencePointDao()
+                                                // 使用 LIKE 搜尋教室名稱
+                                                val matches = refDao.searchReferencePointsByName("%${destText}%").first()
+                                                val target = matches.firstOrNull()
+                                                if (target != null) {
+                                                    // 優先使用 DB 中的 buildingId & floorId
+                                                    val buildingId = target.buildingId
+                                                    val floorId = target.floorId
+
+                                                    // 嘗試找到入口（DB 內 type=ENTRANCE），若找不到則使用 SEEntrances 的 heuristics
+                                                    val floorPoints = refDao.getReferencePointsByFloor(buildingId, floorId).first()
+                                                    val entranceEntity = floorPoints.firstOrNull { it.type.equals("ENTRANCE", true) }
+                                                    val entranceLatLng = if (entranceEntity != null) {
+                                                        // DB reference points use percentage coords; no lat/lng stored there - fallback to SEEntrances mapping
+                                                        SEEntrances.getNearestEntrance(target.name).location
+                                                    } else {
+                                                        SEEntrances.getNearestEntrance(target.name).location
+                                                    }
+
+                                                    // 把導航目的地改為入口
+                                                    destination = entranceLatLng
+                                                    lastRerouteLoc = originLatLng
+                                                    travelTimeText = null
+                                                    drawRoute(
+                                                        origin = originLatLng,
+                                                        dest = entranceLatLng,
+                                                        onStart = { isRouting = true },
+                                                        onSuccess = { points -> isRouting = false; routePoints = points },
+                                                        onTime = { timeText -> travelTimeText = timeText },
+                                                        onError = { isRouting = false; errorMsg = it; scope.launch { delay(3000); errorMsg = null } }
+                                                    )
+
+                                                    // 設定待進入室內導航的參數（entryPointId 使用 entranceEntity?.id 或 null）
+                                                    pendingIndoorParams = IndoorNavParams(
+                                                        buildingId = buildingId,
+                                                        floorId = floorId,
+                                                        targetPointId = target.id,
+                                                        entryPointId = entranceEntity?.id
+                                                    )
+                                                }
+                                            } catch (e: Exception) {
+                                                // 不阻斷主流程，只顯示錯誤
+                                                errorMsg = "解析室內教室資料失敗：${e.localizedMessage}"
+                                                scope.launch { delay(3000); errorMsg = null }
+                                            }
+                                        }
+
+                                        // 如果目的地為教室，嘗試找室內圖
+                                        val cp = customPoints.firstOrNull { it.location == destLatLng }
+                                        indoorResId = if (cp != null && cp.name.startsWith("se", true)) findIndoorMapResId(context, cp.name) else 0
                                     },
                                     modifier = Modifier.height(35.dp),
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
@@ -582,6 +665,35 @@ fun MapScreen(navController: NavHostController) {
         travelTimeText?.let { text ->
             Box(modifier = Modifier.fillMaxWidth().padding(12.dp).background(Color.White.copy(alpha = 0.8f), shape = MaterialTheme.shapes.medium).align(Alignment.BottomCenter).padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text(text = "預計花費：$text", style = MaterialTheme.typography.bodyMedium, color = Color.DarkGray)
+            }
+        }
+
+        // 如果已解析到室內導航參數，顯示進入室內導航按鈕（會將使用者帶到 IndoorMapScreen）
+        pendingIndoorParams?.let { params ->
+            Box(modifier = Modifier.fillMaxSize()) {
+                Card(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(12.dp)
+                        .zIndex(3f),
+                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.95f)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(text = "導航至建築入口已就緒", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(modifier = Modifier.weight(1f))
+                        TextButton(onClick = {
+                            // 透過 navController 導向室內地圖；路由格式為 indoor/{building}/{floor}/{target}/{entry}
+                            try {
+                                val route = "indoor/${params.buildingId}/${params.floorId}/${params.targetPointId}/${params.entryPointId ?: ""}"
+                                navController.navigate(route)
+                            } catch (e: Exception) {
+                                errorMsg = "開啟室內導航失敗：${e.localizedMessage}"
+                                scope.launch { delay(3000); errorMsg = null }
+                            }
+                        }) { Text("進入室內導航") }
+                    }
+                }
             }
         }
 
@@ -638,7 +750,65 @@ fun MapScreen(navController: NavHostController) {
                                         onError = { isRouting = false; errorMsg = it; scope.launch { delay(3000); errorMsg = null } })
                                     selectedPoint = null
                                     cameraState.move(CameraUpdateFactory.newLatLng(point.location))
+                                    // 若選擇的點是教室則解析室內圖資源 id
+                                    indoorResId = if (point.name.startsWith("se", true)) findIndoorMapResId(context, point.name) else 0
                                 }) { Text("導航") }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 若目的地為教室且找到室內圖資源，顯示右下角按鈕以打開室內圖
+            if (indoorResId != 0 && destination != null) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    FloatingActionButton(
+                        onClick = {
+                            // 若資源意外失敗，顯示錯誤訊息
+                            if (indoorResId == 0) {
+                                errorMsg = "找不到室內地圖圖片"
+                                scope.launch { delay(3000); errorMsg = null }
+                            } else {
+                                showIndoorMap = true
+                            }
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(16.dp)
+                            .zIndex(3f)
+                    ) {
+                        Icon(imageVector = Icons.Default.Place, contentDescription = "室內地圖")
+                    }
+                }
+            }
+
+            // 室內地圖對話框 (顯示 drawable 圖片)
+            if (showIndoorMap) {
+                androidx.compose.ui.window.Dialog(onDismissRequest = { showIndoorMap = false }) {
+                    Card(modifier = Modifier
+                        .fillMaxWidth(0.95f)
+                        .wrapContentHeight()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(text = "室內地圖", style = MaterialTheme.typography.titleMedium)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            // 若資源 id 有效，顯示圖片
+                            if (indoorResId != 0) {
+                                Image(
+                                    painter = painterResource(id = indoorResId),
+                                    contentDescription = "室內地圖圖片",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 400.dp),
+                                    contentScale = ContentScale.Fit
+                                )
+                            } else {
+                                Text(text = "無可用的室內地圖圖片", color = Color.Gray)
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = { showIndoorMap = false }) { Text("關閉") }
                             }
                         }
                     }
@@ -678,101 +848,11 @@ fun drawRoute(
         return
     }
     onStart()
-
-
-// 需要 import com.example.project250311.Map.data.SEClassrooms
-    val allPoints = com.example.project250311.Map.data.SEClassrooms.allClassrooms
-
-// 檢查目的地是否在理工學院內
-// 然後在 allPoints (而不是 customPoints) 上執行 .find
-    val isDestInSE = allPoints.find { it.location == dest }?.name?.startsWith("SE") == true
-
-// 如果目的地在理工學院內，找到最近的出入口作為中間點
-    val waypoint = if (isDestInSE) {
-        val destCode = allPoints.find { it.location == dest }?.name ?: ""
-        SEEntrances.getNearestEntrance(destCode) // 假設 SEEntrances 是可存取的
-    } else null
-
-    // 如果有中間點，先導航到中間點
-    if (waypoint != null) {
-        val o = "${origin.latitude},${origin.longitude}"
-        val w = "${waypoint.location.latitude},${waypoint.location.longitude}"
-        val d = "${dest.latitude},${dest.longitude}"
-        
-        // 先取得到出入口的路線
-        RetrofitInstance.api.getDirections(
-            origin = o, 
-            destination = w, 
-            mode = "walking", 
-            apiKey = "AIzaSyDj1CTmLJMsvCTRwwVJrCFHp6Cqt7wVKp8"
-        ).enqueue(object : Callback<com.example.project250311.Map.model.DirectionsResponse> {
-            override fun onResponse(
-                call: Call<com.example.project250311.Map.model.DirectionsResponse>,
-                response: Response<com.example.project250311.Map.model.DirectionsResponse>
-            ) {
-                if (response.isSuccessful) {
-                    val body = response.body()
-                    val route1 = body?.routes?.firstOrNull()
-                    val points1 = route1?.overview_polyline?.points
-                    val duration1 = route1?.legs?.firstOrNull()?.duration?.text ?: "未知時間"
-
-                    // 再取得從出入口到目的地的路線
-                    RetrofitInstance.api.getDirections(
-                        origin = w,
-                        destination = d,
-                        mode = "walking",
-                        apiKey = "AIzaSyDj1CTmLJMsvCTRwwVJrCFHp6Cqt7wVKp8"
-                    ).enqueue(object : Callback<com.example.project250311.Map.model.DirectionsResponse> {
-                        override fun onResponse(
-                            call: Call<com.example.project250311.Map.model.DirectionsResponse>,
-                            response: Response<com.example.project250311.Map.model.DirectionsResponse>
-                        ) {
-                            if (response.isSuccessful) {
-                                val body = response.body()
-                                val route2 = body?.routes?.firstOrNull()
-                                val points2 = route2?.overview_polyline?.points
-                                val duration2 = route2?.legs?.firstOrNull()?.duration?.text ?: "未知時間"
-
-                                // 合併兩段路線
-                                if (!points1.isNullOrEmpty() && !points2.isNullOrEmpty()) {
-                                    val combinedPoints = PolylineUtils.decodePolyline(points1) + 
-                                                       PolylineUtils.decodePolyline(points2)
-                                    onSuccess(combinedPoints)
-                                    // 合併時間顯示
-                                    onTime("第一段：$duration1，第二段：$duration2")
-                                } else {
-                                    onError("無法生成完整路線")
-                                }
-                            } else {
-                                onError("第二段路線規劃失敗")
-                            }
-                        }
-                        override fun onFailure(call: Call<com.example.project250311.Map.model.DirectionsResponse>, t: Throwable) {
-                            onError("第二段路線規劃失敗：${t.message}")
-                        }
-                    })
-                } else {
-                    onError("第一段路線規劃失敗")
-                }
-            }
-            override fun onFailure(call: Call<com.example.project250311.Map.model.DirectionsResponse>, t: Throwable) {
-                onError("第一段路線規劃失敗：${t.message}")
-            }
-        })
-    } else {
-        // 如果目的地不在理工學院內，直接規劃路線
-        val o = "${origin.latitude},${origin.longitude}"
-        val d = "${dest.latitude},${dest.longitude}"
-        RetrofitInstance.api.getDirections(
-            origin = o, 
-            destination = d, 
-            mode = "walking", 
-            apiKey = "AIzaSyDj1CTmLJMsvCTRwwVJrCFHp6Cqt7wVKp8"
-        ).enqueue(object : Callback<com.example.project250311.Map.model.DirectionsResponse> {
-            override fun onResponse(
-                call: Call<com.example.project250311.Map.model.DirectionsResponse>,
-                response: Response<com.example.project250311.Map.model.DirectionsResponse>
-            ) {
+    val o = "${origin.latitude},${origin.longitude}"
+    val d = "${dest.latitude},${dest.longitude}"
+    RetrofitInstance.api.getDirections(origin = o, destination = d, mode = "walking", apiKey = "AIzaSyDj1CTmLJMsvCTRwwVJrCFHp6Cqt7wVKp8")
+        .enqueue(object : Callback<com.example.project250311.Map.model.DirectionsResponse> {
+            override fun onResponse(call: Call<com.example.project250311.Map.model.DirectionsResponse>, response: Response<com.example.project250311.Map.model.DirectionsResponse>) {
                 if (response.isSuccessful) {
                     val body = response.body()
                     val route = body?.routes?.firstOrNull()
@@ -796,5 +876,4 @@ fun drawRoute(
                 onError("網路錯誤：${t.localizedMessage}")
             }
         })
-    }
 }

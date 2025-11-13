@@ -443,6 +443,32 @@ fun AppNavHost(
             IndoorMapScreen(modifier = Modifier)
         }
 
+        // 室外 MapScreen 透過 indoor/{building}/{floor}/{target}/{entry} 進入室內導航
+        composable(
+            route = "indoor/{building}/{floor}/{target}/{entry}",
+            arguments = listOf(
+                navArgument("building") { type = NavType.StringType; defaultValue = "" },
+                navArgument("floor") { type = NavType.IntType; defaultValue = -1 },
+                navArgument("target") { type = NavType.StringType; defaultValue = "" },
+                navArgument("entry") { type = NavType.StringType; defaultValue = "" }
+            )
+        ) { backStackEntry ->
+            val building = backStackEntry.arguments?.getString("building") ?: ""
+            val floor = backStackEntry.arguments?.getInt("floor") ?: -1
+            val target = backStackEntry.arguments?.getString("target") ?: ""
+            val entry = backStackEntry.arguments?.getString("entry") ?: ""
+
+            IndoorMapScreen(
+                navController = navController,
+                modifier = Modifier,
+                buildingId = if (building.isBlank()) null else building,
+                floorId = if (floor < 0) null else floor,
+                targetPointId = if (target.isBlank()) null else target,
+                entryPointId = if (entry.isBlank()) null else entry,
+                autoStart = true
+            )
+        }
+
         // 課表畫面
         composable("schedule") { ScheduleScreen(courseViewModel) }
 
@@ -473,7 +499,7 @@ fun AppNavHost(
             route = "note_edit_with_id/{noteId}",
             arguments =
                 listOf(
-                    navArgument("noteId") {
+                     navArgument("noteId") {
                         type = NavType.IntType
                         defaultValue = -1
                     }

@@ -4,6 +4,7 @@ package com.example.project250311.Map.IndoorMap
 
 import android.content.res.Resources
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -12,10 +13,15 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.runtime.*
+import androidx.navigation.NavHostController
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -26,6 +32,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.core.graphics.drawable.toBitmap
 import com.example.project250311.Map.IndoorMap.Database.GridCacheEntity
 import com.example.project250311.Map.IndoorMap.Database.IndoorMapDatabase
@@ -278,7 +286,15 @@ suspend fun buildGridOverlayBitmap(g: Grid): ImageBitmap =
 
 // ======================= 主畫面 =======================
 @Composable
-fun IndoorMapScreen(modifier: Modifier = Modifier) {
+fun IndoorMapScreen(
+    navController: NavHostController? = null,
+    modifier: Modifier = Modifier,
+    buildingId: String? = null,
+    floorId: Int? = null,
+    targetPointId: String? = null,
+    entryPointId: String? = null,
+    autoStart: Boolean = true
+) {
     val context = LocalContext.current
     val colorMaterial = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
@@ -287,6 +303,8 @@ fun IndoorMapScreen(modifier: Modifier = Modifier) {
     val db = remember { IndoorMapDatabase.getDatabase(context) }
     val gridDao = remember(db) { db.gridCacheDao() }
     val refDao = remember(db) { db.referencePointDao() } // 新增：參考點 DAO
+
+    // (moved) LaunchedEffect that auto-loads target/entry and computes path is placed after recomputePathAsync
 
     val floorPlans =
             listOf(
@@ -307,25 +325,30 @@ fun IndoorMapScreen(modifier: Modifier = Modifier) {
 
     // ===== (2) 載入時先縮圖（依裝置寬高上限） =====
     LaunchedEffect(currentImageRes) {
-        val d = context.getDrawable(currentImageRes) ?: return@LaunchedEffect
-        val raw = d.toBitmap()
-
-        val metrics = Resources.getSystem().displayMetrics
-        val maxW = (metrics.widthPixels * 2f).toInt()
-        val maxH = (metrics.heightPixels * 2f).toInt()
-
-        val scale = min(maxW / raw.width.toFloat(), maxH / raw.height.toFloat())
-        val finalBmp =
+        // Decode and scale bitmap off the main thread to avoid UI freezes (was blocking main thread)
+        val finalBmp = withContext(Dispatchers.Default) {
+            try {
+                // decodeResource is safe to call off main thread
+                val decoded = BitmapFactory.decodeResource(context.resources, currentImageRes) ?: return@withContext null
+                val metrics = Resources.getSystem().displayMetrics
+                val maxW = (metrics.widthPixels * 2f).toInt()
+                val maxH = (metrics.heightPixels * 2f).toInt()
+                val scale = min(maxW / decoded.width.toFloat(), maxH / decoded.height.toFloat())
                 if (scale < 1f) {
                     Bitmap.createScaledBitmap(
-                            raw,
-                            (raw.width * scale).toInt().coerceAtLeast(1),
-                            (raw.height * scale).toInt().coerceAtLeast(1),
-                            true
+                        decoded,
+                        (decoded.width * scale).toInt().coerceAtLeast(1),
+                        (decoded.height * scale).toInt().coerceAtLeast(1),
+                        true
                     )
-                } else raw
+                } else decoded
+            } catch (e: Exception) {
+                null
+            }
+        }
 
-        imageBitmap = finalBmp.asImageBitmap()
+        // set imageBitmap on main thread
+        imageBitmap = finalBmp?.asImageBitmap()
     }
 
     // 視窗互動狀態
@@ -406,6 +429,52 @@ fun IndoorMapScreen(modifier: Modifier = Modifier) {
     // 影像座標 -> 螢幕座標（用於畫點/路徑時）
     fun imgToScreen(p: Offset) = Offset(p.x * scale + offsetX, p.y * scale + offsetY)
 
+    // 當透過外部參數 (targetPointId) 呼叫時，自動載入目標與入口並計算路徑
+    LaunchedEffect(targetPointId, entryPointId, currentImageRes, imageBitmap) {
+        if (targetPointId == null) return@LaunchedEffect
+        try {
+            // 取得所有參考點（一次性）
+            val all = withContext(Dispatchers.IO) { refDao.getAllReferencePoints().first() }
+            val targetEntity = all.firstOrNull { it.id == targetPointId }
+            if (targetEntity != null) {
+                // 設定樓層圖片資源
+                currentImageRes = targetEntity.imageId
+
+                // 等待 imageBitmap 載入
+                // imageBitmap 會因 currentImageRes 而在另一個 LaunchedEffect 載入
+                // 監聽 imageBitmap 非空
+                withContext(Dispatchers.Default) {
+                    var attempts = 0
+                    while (imageBitmap == null && attempts < 50) {
+                        attempts++
+                        delay(60)
+                    }
+                }
+
+                val bmp = imageBitmap?.asAndroidBitmap()
+                if (bmp != null) {
+                    // 找入口：優先使用 entryPointId，否則尋找 building+floor 的 ENTRANCE
+                    val entryEntity = if (!entryPointId.isNullOrBlank()) all.firstOrNull { it.id == entryPointId } else {
+                        all.firstOrNull { it.buildingId == targetEntity.buildingId && it.floorId == targetEntity.floorId && it.type.equals("ENTRANCE", true) }
+                    }
+
+                    // 若無入口仍嘗試從 DB 取得任一教室點作為 goal（不會導致 crash）
+                    val s = entryEntity?.let { Offset((it.x.toFloat() / 100f) * bmp.width, (it.y.toFloat() / 100f) * bmp.height) }
+                    val g = Offset((targetEntity.x.toFloat() / 100f) * bmp.width, (targetEntity.y.toFloat() / 100f) * bmp.height)
+
+                    start = s
+                    goal = g
+
+                    if (autoStart) {
+                        recomputePathAsync()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // 忽略錯誤，UI 可顯示或回傳
+        }
+    }
+
     // 先嘗試從 DB 讀取快取（不需等待圖片載入）
     LaunchedEffect(currentImageRes, gridSample) {
         // 清理目前狀態
@@ -420,9 +489,14 @@ fun IndoorMapScreen(modifier: Modifier = Modifier) {
         if (cached != null) {
             val cells = cached.cells.toBooleanArray(cached.width * cached.height)
             val g = Grid(cached.width, cached.height, cells)
+
+            // build overlay off the main thread
+            val ov = withContext(Dispatchers.Default) { buildGridOverlayBitmap(g) }
+
+            // update UI state on Main (we're in a LaunchedEffect with Main dispatcher)
             grid = g
             walkableCount = cells.count { it }
-            overlay = buildGridOverlayBitmap(g)
+            overlay = ov
         }
     }
 
@@ -431,43 +505,45 @@ fun IndoorMapScreen(modifier: Modifier = Modifier) {
         if (grid != null) return@LaunchedEffect
         val bmp = imageBitmap?.asAndroidBitmap() ?: return@LaunchedEffect
 
-        val g =
-                withContext(Dispatchers.Default) {
-                    bitmapToGridFromWhiteCorridor(
-                            bitmap = bmp,
-                            sample = gridSample,
-                            satMax = 0.12f,
-                            valMin = 0.92f,
-                            wallInflate = 3
-                    )
-                }
-        val ov = buildGridOverlayBitmap(g)
-
-        // 更新 UI 狀態
-        grid = g
-        overlay = ov
-        walkableCount = g.cells.count { it }
-
-        // 寫入 DB 快取
-        val packed = g.cells.toBitPackedBytes()
-        withContext(Dispatchers.IO) {
-            gridDao.upsert(
-                    GridCacheEntity(
-                            imageId = currentImageRes,
-                            sample = gridSample,
-                            width = g.w,
-                            height = g.h,
-                            cells = packed
-                    )
+    val g =
+        withContext(Dispatchers.Default) {
+            bitmapToGridFromWhiteCorridor(
+                bitmap = bmp,
+                sample = gridSample,
+                satMax = 0.12f,
+                valMin = 0.92f,
+                wallInflate = 3
             )
         }
+
+    // build overlay off the main thread
+    val ov = withContext(Dispatchers.Default) { buildGridOverlayBitmap(g) }
+
+    // 更新 UI 狀態 (LaunchedEffect runs on Main dispatcher)
+    grid = g
+    overlay = ov
+    walkableCount = g.cells.count { it }
+
+    // 寫入 DB 快取 - pack bytes off main thread then IO upsert
+    val packed = withContext(Dispatchers.Default) { g.cells.toBitPackedBytes() }
+    withContext(Dispatchers.IO) {
+        gridDao.upsert(
+            GridCacheEntity(
+                imageId = currentImageRes,
+                sample = gridSample,
+                width = g.w,
+                height = g.h,
+                cells = packed
+            )
+        )
+    }
     }
 
     Scaffold(
             topBar = {
                 TopAppBar(
-                        title = { Text("平面圖導航 Demo", fontWeight = FontWeight.SemiBold) },
-                        actions = {
+                    title = { Text("平面圖導航 Demo", fontWeight = FontWeight.SemiBold) },
+                    actions = {
                             // 樓層下拉
                             ExposedDropdownMenuBox(
                                     expanded = expanded,
@@ -713,13 +789,30 @@ fun IndoorMapScreen(modifier: Modifier = Modifier) {
                         }
                     }
                 }
-            }
+                    }
                     ?: run {
                         Box(
                                 Modifier.fillMaxSize(),
                                 contentAlignment = androidx.compose.ui.Alignment.Center
                         ) { Text("尚未載入平面圖資源") }
                     }
+            
+            // 左下角返回室外地圖按鈕
+            FloatingActionButton(
+                onClick = { navController?.popBackStack() },
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(12.dp)
+                    .zIndex(3f),
+                containerColor = MaterialTheme.colorScheme.primary
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = "返回地圖",
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
+            }
+
         }
     }
 }
