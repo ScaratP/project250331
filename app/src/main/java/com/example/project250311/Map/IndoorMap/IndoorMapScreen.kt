@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.graphics.drawable.toBitmap
+import androidx.compose.ui.res.colorResource
 import com.example.project250311.Map.IndoorMap.Database.GridCacheEntity
 import com.example.project250311.Map.IndoorMap.Database.IndoorMapDatabase
 import com.example.project250311.Map.IndoorMap.Database.ReferencePointEntity
@@ -44,6 +45,7 @@ import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlinx.coroutines.*
+import android.util.Log
 
 // ======================= 資料結構 =======================
 data class Node(
@@ -371,6 +373,13 @@ fun IndoorMapScreen(
     var path by remember { mutableStateOf<List<Offset>>(emptyList()) }
     var showGridOverlay by remember { mutableStateOf(false) }
 
+    // Debug / telemetry
+    var debugInfo by remember { mutableStateOf("") }
+    var startGridCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var goalGridCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var startWalkable by remember { mutableStateOf<Boolean?>(null) }
+    var goalWalkable by remember { mutableStateOf<Boolean?>(null) }
+
     // 新增：Overlay 與偵錯統計（原本有使用到，但未宣告）
     var overlay by remember { mutableStateOf<ImageBitmap?>(null) }
     var walkableCount by remember { mutableStateOf(0) }
@@ -411,18 +420,51 @@ fun IndoorMapScreen(
         val (gx, gy) = imageToGrid(ePt, g, gridSample)
 
         scope.launch(Dispatchers.Default) {
-            val raw = aStar(g, sx, sy, gx, gy)
-            if (raw.isEmpty()) {
-                withContext(Dispatchers.Main) { path = emptyList() }
-                return@launch
-            }
-            val vis = smoothByVisibility(raw, g)
-            val px =
-                    vis.map { node ->
-                        Offset((node.x + 0.5f) * gridSample, (node.y + 0.5f) * gridSample)
+            try {
+                // set grid cell debug info
+                startGridCell = sx to sy
+                goalGridCell = gx to gy
+                startWalkable = g.walkable(sx, sy)
+                goalWalkable = g.walkable(gx, gy)
+
+                if (!startWalkable!! || !goalWalkable!!) {
+                    val msg = "startWalkable=${startWalkable} goalWalkable=${goalWalkable}"
+                    Log.d("IndoorMap", "recomputePathAsync abort: $msg")
+                    withContext(Dispatchers.Main) {
+                        debugInfo = "無法計算：起點/終點不可通行 ($msg)"
+                        path = emptyList()
                     }
-            val simplified = rdp(px, eps = (gridSample * 0.75f))
-            withContext(Dispatchers.Main) { path = simplified }
+                    return@launch
+                }
+
+                val t0 = System.currentTimeMillis()
+                val raw = aStar(g, sx, sy, gx, gy)
+                val took = System.currentTimeMillis() - t0
+                Log.d("IndoorMap", "aStar finished size=${raw.size} took=${took}ms grid=${g.w}x${g.h}")
+
+                if (raw.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        debugInfo = "aStar 無路徑 (計算 ${took}ms)"
+                        path = emptyList()
+                    }
+                    return@launch
+                }
+                val vis = smoothByVisibility(raw, g)
+                val px = vis.map { node -> Offset((node.x + 0.5f) * gridSample, (node.y + 0.5f) * gridSample) }
+                val simplified = rdp(px, eps = (gridSample * 0.75f))
+                withContext(Dispatchers.Main) {
+                    path = simplified
+                    debugInfo = "找到路徑: raw=${raw.size} vis=${vis.size} simplified=${simplified.size} (${took}ms)"
+                }
+            } catch (e: CancellationException) {
+                Log.d("IndoorMap", "recomputePathAsync cancelled")
+            } catch (e: Exception) {
+                Log.e("IndoorMap", "recomputePathAsync error", e)
+                withContext(Dispatchers.Main) {
+                    debugInfo = "計算錯誤: ${e.localizedMessage}"
+                    path = emptyList()
+                }
+            }
         }
     }
 
@@ -537,6 +579,14 @@ fun IndoorMapScreen(
             )
         )
     }
+
+    }
+
+    // 當 start/goal 與 grid 都就緒時，自動計算路徑（補強：避免 target/entry 的 LaunchedEffect 在 grid 構建前就呼叫 recomputePathAsync）
+    LaunchedEffect(start, goal, grid) {
+        if (start != null && goal != null && grid != null) {
+            recomputePathAsync()
+        }
     }
 
     Scaffold(
@@ -787,6 +837,11 @@ fun IndoorMapScreen(
                                 )
                             }
                         }
+
+                                    // Debug: 顯示 start/goal 對應的 grid cell 與 walkable 狀態（只用文字提示）
+                                    // (更詳細的格子可視化可再加入)
+                                    // note: debugInfo 由 recomputePathAsync 更新
+                                    // 在 Canvas 內無法直接 draw text easily; 改在外層顯示 box
                     }
                 }
                     }
@@ -811,6 +866,25 @@ fun IndoorMapScreen(
                     contentDescription = "返回地圖",
                     tint = MaterialTheme.colorScheme.onPrimary
                 )
+            }
+
+            // 顯示 debug 訊息（若有）
+            if (debugInfo.isNotBlank()) {
+                Box(modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 8.dp)) {
+                    Card(colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.yellow).copy(alpha = 0.9f))) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            Text(text = debugInfo, color = colorResource(id = R.color.black))
+                            startGridCell?.let { (x, y) ->
+                                Text(text = "start cell: $x,$y walkable=${startWalkable}", color = colorResource(id = R.color.black))
+                            }
+                            goalGridCell?.let { (x, y) ->
+                                Text(text = "goal cell: $x,$y walkable=${goalWalkable}", color = colorResource(id = R.color.black))
+                            }
+                        }
+                    }
+                }
             }
 
         }

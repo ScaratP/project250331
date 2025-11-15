@@ -60,8 +60,9 @@ import com.google.android.gms.maps.model.PatternItem
 import com.example.project250311.Map.data.CustomPoint
 import com.example.project250311.Map.data.SEEntrances
 import com.example.project250311.Map.IndoorMap.Database.IndoorMapDatabase
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
-
+import kotlinx.coroutines.withContext
 
 
 @SuppressLint("MissingPermission")
@@ -246,6 +247,27 @@ fun MapScreen(navController: NavHostController) {
 
     // 8. Map 畫面
     Box(modifier = Modifier.fillMaxSize()) {
+        // 預先在背景建立並快取 Marker BitmapDescriptor，避免在 Compose 組合階段重複同步 decode/scale
+        val markerLargeDescState = remember { mutableStateOf<com.google.android.gms.maps.model.BitmapDescriptor?>(null) }
+        val markerSmallDescState = remember { mutableStateOf<com.google.android.gms.maps.model.BitmapDescriptor?>(null) }
+        LaunchedEffect(Unit) {
+            // background decode/scale
+            withContext(Dispatchers.Default) {
+                try {
+                    val raw = BitmapFactory.decodeResource(context.resources, R.drawable.marker)
+                    val bmp120 = android.graphics.Bitmap.createScaledBitmap(raw, 120, 120, true)
+                    val bmp80 = android.graphics.Bitmap.createScaledBitmap(raw, 80, 80, true)
+                    val desc120 = com.google.android.gms.maps.model.BitmapDescriptorFactory.fromBitmap(bmp120)
+                    val desc80 = com.google.android.gms.maps.model.BitmapDescriptorFactory.fromBitmap(bmp80)
+                    withContext(Dispatchers.Main) {
+                        markerLargeDescState.value = desc120
+                        markerSmallDescState.value = desc80
+                    }
+                } catch (_: Exception) {
+                    // ignore, fallback will be used
+                }
+            }
+        }
         GoogleMap(
             modifier = Modifier.matchParentSize(),
             cameraPositionState = cameraState,
@@ -269,7 +291,8 @@ fun MapScreen(navController: NavHostController) {
         ) {
             // A. 顯示「你的位置」Marker
             currentLoc?.let {
-                Marker(state = MarkerState(it), title = "你的位置", icon = getResizedBitmapDescriptor(context, R.drawable.marker, 120, 120))
+                val icon = markerLargeDescState.value ?: getResizedBitmapDescriptor(context, R.drawable.marker, 120, 120)
+                Marker(state = MarkerState(it), title = "你的位置", icon = icon)
             }
 
             // B. 顯示「目的地」Marker，點擊直接清除
@@ -277,7 +300,7 @@ fun MapScreen(navController: NavHostController) {
                 Marker(
                     state = MarkerState(destLatLng),
                     title = "目的地",
-                    icon = getResizedBitmapDescriptor(context, R.drawable.marker, 120, 120),
+                    icon = markerLargeDescState.value ?: getResizedBitmapDescriptor(context, R.drawable.marker, 120, 120),
                     onClick = {
                         destination = null
                         routePoints = emptyList()
@@ -289,7 +312,7 @@ fun MapScreen(navController: NavHostController) {
 
             // C. 顯示自訂地點 Marker
             customPoints.forEach { custom ->
-                Marker(state = MarkerState(custom.location), title = custom.name, icon = getResizedBitmapDescriptor(context, R.drawable.marker, 80, 80), onClick = {
+                Marker(state = MarkerState(custom.location), title = custom.name, icon = markerSmallDescState.value ?: getResizedBitmapDescriptor(context, R.drawable.marker, 80, 80), onClick = {
                     selectedPoint = custom
                     // 當點擊 Marker 時，如果是教室則預先解析室內圖資源 id 以便顯示按鈕
                     if (custom.name.startsWith("se", true)) {
@@ -579,38 +602,48 @@ fun MapScreen(navController: NavHostController) {
                                         routePoints = emptyList()
                                         lastRerouteLoc = originLatLng
                                         travelTimeText = null
-                                        drawRoute(
-                                            origin = originLatLng, dest = destLatLng,
-                                            onStart = { isRouting = true },
-                                            onSuccess = { points -> isRouting = false; routePoints = points },
-                                            onTime = { timeText -> travelTimeText = timeText },
-                                            onError = { isRouting = false; errorMsg = it; scope.launch { delay(3000); errorMsg = null } }
-                                        )
 
-                                        cameraState.move(CameraUpdateFactory.newLatLng(originLatLng))
-
-                                        // 如果目的地為教室，嘗試找室內點與入口（非同步）
+                                        // 檢查是否能直接在室內進行導航（當起點與目的地皆為教室）
                                         scope.launch {
                                             try {
                                                 val db = IndoorMapDatabase.getDatabase(context)
                                                 val refDao = db.referencePointDao()
-                                                // 使用 LIKE 搜尋教室名稱
-                                                val matches = refDao.searchReferencePointsByName("%${destText}%").first()
-                                                val target = matches.firstOrNull()
-                                                if (target != null) {
-                                                    // 優先使用 DB 中的 buildingId & floorId
-                                                    val buildingId = target.buildingId
-                                                    val floorId = target.floorId
 
-                                                    // 嘗試找到入口（DB 內 type=ENTRANCE），若找不到則使用 SEEntrances 的 heuristics
+                                                // 嘗試用名稱搜尋目的地與起點（若使用者有輸入教室名稱）
+                                                val destMatches = if (destText.isNotBlank()) refDao.searchReferencePointsByName("%${destText}%").first() else emptyList()
+                                                val destRef = destMatches.firstOrNull()
+
+                                                val originRef = if (startText.isNotBlank() && !startText.equals("目前位置", true)) {
+                                                    val oMatches = refDao.searchReferencePointsByName("%${startText}%").first()
+                                                    oMatches.firstOrNull()
+                                                } else null
+
+                                                // 若起點與目的地都能對到室內參考點，且在同一張圖（同一樓層/建築），則直接進入室內導航
+                                                if (originRef != null && destRef != null && originRef.buildingId == destRef.buildingId && originRef.floorId == destRef.floorId) {
+                                                    // 使用起點教室作為 entryPointId，目的地教室作為 targetPointId
+                                                    val route = "indoor/${destRef.buildingId}/${destRef.floorId}/${destRef.id}/${originRef.id}"
+                                                    // 導航至室內畫面（不要再畫戶外路線）
+                                                    navController.navigate(route)
+                                                    return@launch
+                                                }
+
+                                                // 否則：原流程，先畫戶外路線到目的地；若目的地為教室，再嘗試找到入口並設定 pendingIndoorParams
+                                                drawRoute(
+                                                    origin = originLatLng, dest = destLatLng,
+                                                    onStart = { isRouting = true },
+                                                    onSuccess = { points -> isRouting = false; routePoints = points },
+                                                    onTime = { timeText -> travelTimeText = timeText },
+                                                    onError = { isRouting = false; errorMsg = it; scope.launch { delay(3000); errorMsg = null } }
+                                                )
+
+                                                cameraState.move(CameraUpdateFactory.newLatLng(originLatLng))
+
+                                                if (destRef != null) {
+                                                    val buildingId = destRef.buildingId
+                                                    val floorId = destRef.floorId
                                                     val floorPoints = refDao.getReferencePointsByFloor(buildingId, floorId).first()
                                                     val entranceEntity = floorPoints.firstOrNull { it.type.equals("ENTRANCE", true) }
-                                                    val entranceLatLng = if (entranceEntity != null) {
-                                                        // DB reference points use percentage coords; no lat/lng stored there - fallback to SEEntrances mapping
-                                                        SEEntrances.getNearestEntrance(target.name).location
-                                                    } else {
-                                                        SEEntrances.getNearestEntrance(target.name).location
-                                                    }
+                                                    val entranceLatLng = SEEntrances.getNearestEntrance(destRef.name).location
 
                                                     // 把導航目的地改為入口
                                                     destination = entranceLatLng
@@ -629,7 +662,7 @@ fun MapScreen(navController: NavHostController) {
                                                     pendingIndoorParams = IndoorNavParams(
                                                         buildingId = buildingId,
                                                         floorId = floorId,
-                                                        targetPointId = target.id,
+                                                        targetPointId = destRef.id,
                                                         entryPointId = entranceEntity?.id
                                                     )
                                                 }
@@ -637,6 +670,15 @@ fun MapScreen(navController: NavHostController) {
                                                 // 不阻斷主流程，只顯示錯誤
                                                 errorMsg = "解析室內教室資料失敗：${e.localizedMessage}"
                                                 scope.launch { delay(3000); errorMsg = null }
+                                                // 若發生錯誤，回退到一般的戶外路線畫法以免無路徑
+                                                drawRoute(
+                                                    origin = originLatLng, dest = destLatLng,
+                                                    onStart = { isRouting = true },
+                                                    onSuccess = { points -> isRouting = false; routePoints = points },
+                                                    onTime = { timeText -> travelTimeText = timeText },
+                                                    onError = { isRouting = false; errorMsg = it; scope.launch { delay(3000); errorMsg = null } }
+                                                )
+                                                cameraState.move(CameraUpdateFactory.newLatLng(originLatLng))
                                             }
                                         }
 
