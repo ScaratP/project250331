@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.location.Location
 import android.os.Looper
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -26,7 +27,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -39,7 +39,6 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
-import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import com.example.project250311.Map.network.RetrofitInstance
 import com.example.project250311.Map.utils.PolylineUtils
@@ -63,7 +62,19 @@ import com.example.project250311.Map.IndoorMap.Database.IndoorMapDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.project250311.Map.IndoorMap.IndoorPositioningViewModel
+import androidx.compose.material.icons.filled.Domain
+import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 
+enum class MarkerFilterState {
+    ALL,          // 都顯示
+    CLASSROOMS,   // 只顯示教室
+    BUILDINGS,    // 只顯示建築
+    NONE          // 都不顯示
+}
 
 @SuppressLint("MissingPermission")
 @Composable
@@ -71,6 +82,11 @@ fun MapScreen(navController: NavHostController) {
     val context = LocalContext.current
     val fusedClient = remember { LocationServices.getFusedLocationProviderClient(context) }
     val scope = rememberCoroutineScope()
+
+    // 取得室內定位 ViewModel
+    val indoorViewModel: IndoorPositioningViewModel = viewModel()
+    // 觀察是否掃到室內 Wi-Fi
+    val isLikelyIndoors by indoorViewModel.isLikelyIndoors.collectAsState()
 
     // 2. 初始鏡頭：校園中心
     val defaultLatLng = LatLng(22.7366, 121.0675)
@@ -94,9 +110,13 @@ fun MapScreen(navController: NavHostController) {
     // 室內地圖顯示狀態與資源 id (0 = 無)
     var indoorResId by remember { mutableStateOf(0) }
     var showIndoorMap by remember { mutableStateOf(false) }
+
     // Pending indoor navigation params (set after resolving classroom -> building/floor/entry)
     data class IndoorNavParams(val buildingId: String, val floorId: Int, val targetPointId: String, val entryPointId: String?)
     var pendingIndoorParams by remember { mutableStateOf<IndoorNavParams?>(null) }
+
+    // 建立一個 state 來記住目前的過濾選項
+    var markerFilterState by remember { mutableStateOf(MarkerFilterState.ALL) }
 
     // Search UI states
     var searchExpanded by remember { mutableStateOf(false) }
@@ -111,49 +131,23 @@ fun MapScreen(navController: NavHostController) {
     val seClassrooms = remember {
         com.example.project250311.Map.data.SEClassrooms.allClassrooms.sortedBy { it.name }
     }
+    val campusBuildings = remember { CampusPoints.points }
 
     val customPoints = remember {
-        val campusPoints = listOf(
-            CustomPoint(LatLng(22.73881963044863, 121.06574371741712), "理工學院A棟入口", "臺東大學理工學院A棟，設有多間專業教學研究實驗室與系所辦公室，提供師生學習與科研環境。"),
-            CustomPoint(LatLng(22.7384658854431, 121.06639817640176), "理工學院B棟入口", "B 棟主要集合與資訊科技、綠能科技、應用數學等理工相關科系的教學與研究空間，教學設施與系辦公室齊備，有利於跨領域合作與科技應用課程的推動。"),
-            CustomPoint(LatLng(22.738103481392233, 121.06599785671906), "理工學院廣場", "距離學餐最近的入口，同時可以進熱AB棟。"),
-            CustomPoint(LatLng(22.73773241822817, 121.06606692360623), "理工學院C棟入口", "C 棟在理工學院三大棟之一，用於資訊類、管理類系所，較多的教學與研究用途，此外三樓以上還有實驗室和教授研究室。"),
-            CustomPoint(LatLng(22.737859271065286, 121.06536003955178), "學餐入口(近理工)", "一宿餐廳提供多種大學餐選項滿足不同學生口味，並且全天開放。"),
-            CustomPoint(LatLng(22.736882703556198, 121.06535922599979), "學餐入口(近7-11)", "一宿餐廳提供多種大學餐選項滿足不同學生口味，並且全天開放。"),
-            CustomPoint(LatLng(22.73667924113307, 121.06540546477464), "7-11(東大門市)", "提供思樂冰、ATM、座位區、Ibon、ibon WiFi、現萃茶、現蒸地瓜等服務。"),
-            CustomPoint(LatLng(22.73604427120851, 121.06556193495481), "第二學生宿舍", "第二學生宿舍新落成，房間採現代化設計，附有公共休息室。"),
-            CustomPoint(LatLng(22.737447706638765, 121.06513631521499), "第一學生宿舍", "第一學生宿舍是校園內最早啟用的一棟，設有單人間與雙人間。"),
-            CustomPoint(LatLng(22.733205795559435, 121.06580202471531), "操場", "校園操場，可供足球、慢跑與排球等活動使用。"),
-            CustomPoint(LatLng(22.733471492854004, 121.06703820593026), "東大游泳池", "游泳池設有25公尺長的主池，並提供兒童戲水池、超音波池、SPA池等設施，適合各年齡層使用。\n" +
-                    "\n" +
-                    "開放時間：\n" +
-                    "\n" +
-                    "每學期第一至十七週： 每週一至週五，18:00 至 21:00。\n" +
-                    "\n" +
-                    "每年11月及12月： 僅開放週二至週四，18:00 至 21:00。\n" +
-                    "\n" +
-                    "國定假日、例假日、寒暑假： 開放時間及收費標準另定。"),
-            CustomPoint(LatLng(22.733005518553, 121.06721074863363), "體育館", "體育館內有籃球場、羽球場與健身房，對外開放時段請參考公告。"),
-            CustomPoint(LatLng(22.73611793378069, 121.06653276459784), "共同教學大樓", "共同教學大樓是一座多功能的教學設施，主要用於舉辦通識課程、共同必修課程及選修課程等。"),
-            CustomPoint(LatLng(22.73650880319903, 121.06655617651063), "靜心書院入口(近理工)", "該書院結合了教室、會議室與休憩區，旨在為學生、教職員及外部來賓提供舒適的學習與生活環境。"),
-            CustomPoint(LatLng(22.73651940864311, 121.06721064437424), "靜心書院入口(近圖書館)", "該書院結合了教室、會議室與休憩區，旨在為學生、教職員及外部來賓提供舒適的學習與生活環境。"),
-            CustomPoint(LatLng(22.738700601981595, 121.06497484121572), "資源回收站", "校園資源回收站，提供紙張、塑膠、金屬等回收服務。"),
-            CustomPoint(LatLng(22.73667908810683, 121.065407893042), "7-11", "校園門口的 7-11，方便師生隨時購買飲料與零食。"),
-            CustomPoint(LatLng(22.733878454879942, 121.06840153239384), "籃球場", "室外籃球場，夜間有照明，適合休閒籃球活動。"),
-            CustomPoint(LatLng(22.735963782832926, 121.06770378016085), "圖書館", "為全校師生提供豐富的學術資源與舒適的閱讀環境。圖書館設有多樣化的閱覽區、電子資料庫、視聽設備及自習空間，也被稱為全球八度獨特圖書館之一。"),
-            CustomPoint(LatLng(22.736834829795928, 121.06865836893749), "行政大樓", "國立臺東大學的行政服務大樓位於校本部，是學校行政運作的核心建築。該大樓內設有多個行政單位，包括秘書室、總務處、教務處、學生事務處等，負責學校日常行政管理與服務。"),
-            CustomPoint(LatLng(22.73583698679327, 121.0682959798721), "颯德固講堂", "為於圖書館旁的一個長廊，主要拿來邀請著名講師來演講。"),
-            CustomPoint(LatLng(22.73954853435361, 121.06738946442893), "師範學院A棟", "主要作為師範學院的行政與教學中心，包含院辦公室、教師研究室及會議室等，提供師生辦公與學術交流的空間。"),
-            CustomPoint(LatLng(22.73916983421318, 121.06759949777546), "師範學院B棟", "B 棟內的「淑真講堂」為大型教學與活動空間，適合舉辦講座、研討會等。"),
-            CustomPoint(LatLng(22.738813950809405, 121.06710692651174), "師範學院C棟", "C 棟主要用於體育與休閒相關課程的教學，設有體育系教室及相關設施支援學生的實習與學習需求。"),
-            CustomPoint(LatLng(22.73863578654702, 121.06753201693554), "淑貞講堂", "淑貞講堂常舉辦演講與表演活動。"),
-            CustomPoint(LatLng(22.737955956237787, 121.06842922214723), "演藝廳", "是學校內主要的表演與活動場地，適合舉辦音樂會、戲劇、講座等文化與學術活動其座位數約有300席。"),
-            CustomPoint(LatLng(22.738135710196378, 121.06869042365535), "人文學院(近演藝廳)", "是學校的核心學術單位之一，致力於培養學生的語言能力、文化素養、批判思維與跨文化理解。學院內設有多個系所，涵蓋中文、外語、歷史、哲學等領域，並積極推動國際交流與跨領域合作。"),
-            CustomPoint(LatLng(22.73762494117075, 121.06907164188596), "人文學院(近大門)", "是學校的核心學術單位之一，致力於培養學生的語言能力、文化素養、批判思維與跨文化理解。學院內設有多個系所，涵蓋中文、外語、歷史、哲學等領域，並積極推動國際交流與跨領域合作。")
-        )
-
         // 將教室與校園地點合併，教室放前面以便在搜尋中先顯示
-        seClassrooms + campusPoints
+        seClassrooms + CampusPoints.points
+    }
+
+    // 根據 markerFilterState，「衍生」出真正要顯示的列表
+    val filteredPoints by remember(markerFilterState, seClassrooms, campusBuildings) {
+        derivedStateOf { // (★) derivedStateOf 會在 filter 變化時才重算，效能很好
+            when (markerFilterState) {
+                MarkerFilterState.ALL -> seClassrooms + campusBuildings // 都顯示
+                MarkerFilterState.CLASSROOMS -> seClassrooms           // 只顯示教室
+                MarkerFilterState.BUILDINGS -> campusBuildings          // 只顯示建築
+                MarkerFilterState.NONE -> emptyList()                // 都不顯示
+            }
+        }
     }
 
     // 5. 申請定位權限
@@ -181,6 +175,32 @@ fun MapScreen(navController: NavHostController) {
                 if (loc != null) {
                     val newLatLng = LatLng(loc.latitude, loc.longitude)
                     currentLoc = newLatLng
+
+                    val indoorParams = pendingIndoorParams
+                    // 2. 檢查室外導航的「目的地」(建築入口) 是否還在
+                    val outdoorDest = destination
+
+                    if (indoorParams != null && outdoorDest != null) {
+                        // 3. 計算目前GPS位置與「建築入口」的距離
+                        val distanceToEntrance = distanceBetween(newLatLng, outdoorDest)
+
+                        // 4. (★) 檢查觸發條件：
+                        //    (距離 < 50公尺 且 掃到了室內Wi-Fi)
+                        if (distanceToEntrance < 10f && isLikelyIndoors) {
+                            scope.launch {
+                                // 執行導航！
+                                val route = "indoor/${indoorParams.buildingId}/${indoorParams.floorId}/${indoorParams.targetPointId}/${indoorParams.entryPointId ?: ""}"
+                                navController.navigate(route)
+
+                                // (重要) 清除狀態，避免重複觸發
+                                pendingIndoorParams = null
+                                destination = null
+                                routePoints = emptyList()
+                                travelTimeText = null
+                            }
+                            return
+                        }
+                    }
 
                     // 只有使用者移動超過 20 公尺時才重新路線
                     destination?.let { dest ->
@@ -248,26 +268,11 @@ fun MapScreen(navController: NavHostController) {
     // 8. Map 畫面
     Box(modifier = Modifier.fillMaxSize()) {
         // 預先在背景建立並快取 Marker BitmapDescriptor，避免在 Compose 組合階段重複同步 decode/scale
-        val markerLargeDescState = remember { mutableStateOf<com.google.android.gms.maps.model.BitmapDescriptor?>(null) }
-        val markerSmallDescState = remember { mutableStateOf<com.google.android.gms.maps.model.BitmapDescriptor?>(null) }
-        LaunchedEffect(Unit) {
-            // background decode/scale
-            withContext(Dispatchers.Default) {
-                try {
-                    val raw = BitmapFactory.decodeResource(context.resources, R.drawable.marker)
-                    val bmp120 = android.graphics.Bitmap.createScaledBitmap(raw, 120, 120, true)
-                    val bmp80 = android.graphics.Bitmap.createScaledBitmap(raw, 80, 80, true)
-                    val desc120 = com.google.android.gms.maps.model.BitmapDescriptorFactory.fromBitmap(bmp120)
-                    val desc80 = com.google.android.gms.maps.model.BitmapDescriptorFactory.fromBitmap(bmp80)
-                    withContext(Dispatchers.Main) {
-                        markerLargeDescState.value = desc120
-                        markerSmallDescState.value = desc80
-                    }
-                } catch (_: Exception) {
-                    // ignore, fallback will be used
-                }
-            }
-        }
+        // (★) 預先「同步」建立並快取 Marker，確保只執行一次
+        // (★) 1. 建立兩個「空的」狀態來存放圖示
+        var largeMarkerIcon by remember { mutableStateOf<com.google.android.gms.maps.model.BitmapDescriptor?>(null) }
+        var smallMarkerIcon by remember { mutableStateOf<com.google.android.gms.maps.model.BitmapDescriptor?>(null) }
+
         GoogleMap(
             modifier = Modifier.matchParentSize(),
             cameraPositionState = cameraState,
@@ -285,22 +290,43 @@ fun MapScreen(navController: NavHostController) {
                     onTime = { timeText -> travelTimeText = timeText },
                     onError = { isRouting = false; errorMsg = it; scope.launch { delay(3000); errorMsg = null } }
                 )
-                // 點地圖也順便關掉 selectedPoint（避免資訊卡蓋住）
                 selectedPoint = null
+            },
+            // (★) 2. 加入 onMapLoaded 回呼
+            onMapLoaded = {
+                // (★) 3. 在地圖載入後，才建立圖示
+                //    (這可以保證 BitmapDescriptorFactory 已經準備好了)
+                if (largeMarkerIcon == null || smallMarkerIcon == null) {
+                    scope.launch(Dispatchers.Default) {
+                        try {
+                            val raw = BitmapFactory.decodeResource(context.resources, R.drawable.marker)
+                            val bmp120 = android.graphics.Bitmap.createScaledBitmap(raw, 120, 120, true)
+                            val bmp80 = android.graphics.Bitmap.createScaledBitmap(raw, 80, 80, true)
+                            // (★) 4. 在背景解碼/縮放，然後回主線程設定狀態
+                            withContext(Dispatchers.Main) {
+                                largeMarkerIcon = com.google.android.gms.maps.model.BitmapDescriptorFactory.fromBitmap(bmp120)
+                                smallMarkerIcon = com.google.android.gms.maps.model.BitmapDescriptorFactory.fromBitmap(bmp80)
+                            }
+                        } catch (e: Exception) {
+                            Log.e("MapScreen", "建立 Marker 圖示失敗", e)
+                        }
+                    }
+                }
             }
         ) {
             // A. 顯示「你的位置」Marker
             currentLoc?.let {
-                val icon = markerLargeDescState.value ?: getResizedBitmapDescriptor(context, R.drawable.marker, 120, 120)
-                Marker(state = MarkerState(it), title = "你的位置", icon = icon)
+                // (★) 5. 直接使用 state 變數 (null 也沒關係，地圖會用預設圖)
+                Marker(state = MarkerState(it), title = "你的位置", icon = largeMarkerIcon)
             }
 
-            // B. 顯示「目的地」Marker，點擊直接清除
+            // B. 顯示「目的地」Marker
             destination?.let { destLatLng ->
                 Marker(
                     state = MarkerState(destLatLng),
                     title = "目的地",
-                    icon = markerLargeDescState.value ?: getResizedBitmapDescriptor(context, R.drawable.marker, 120, 120),
+                    // (★) 5. 直接使用 state 變數
+                    icon = largeMarkerIcon,
                     onClick = {
                         destination = null
                         routePoints = emptyList()
@@ -311,17 +337,22 @@ fun MapScreen(navController: NavHostController) {
             }
 
             // C. 顯示自訂地點 Marker
-            customPoints.forEach { custom ->
-                Marker(state = MarkerState(custom.location), title = custom.name, icon = markerSmallDescState.value ?: getResizedBitmapDescriptor(context, R.drawable.marker, 80, 80), onClick = {
-                    selectedPoint = custom
-                    // 當點擊 Marker 時，如果是教室則預先解析室內圖資源 id 以便顯示按鈕
-                    if (custom.name.startsWith("se", true)) {
-                        indoorResId = findIndoorMapResId(context, custom.name)
-                    } else {
-                        indoorResId = 0
+            filteredPoints.forEach { custom ->
+                Marker(
+                    state = MarkerState(custom.location),
+                    title = custom.name,
+                    // (★) 5. 直接使用 state 變數
+                    icon = smallMarkerIcon,
+                    onClick = {
+                        selectedPoint = custom
+                        if (custom.name.startsWith("se", true)) {
+                            indoorResId = findIndoorMapResId(context, custom.name)
+                        } else {
+                            indoorResId = 0
+                        }
+                        false
                     }
-                    false
-                })
+                )
             }
 
             // D. 畫三段 Polyline：灰色虛線 + 藍色實線 + 灰色虛線
@@ -336,7 +367,51 @@ fun MapScreen(navController: NavHostController) {
             }
         }
 
-        Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+
+        // 在 project250311.zip/Map/MapScreen.kt 中
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart) // (★) 在左下角
+                .padding(bottom = 16.dp, start = 12.dp) // (★) 調整 padding
+                .zIndex(3f)
+        ) {
+            // 讓 when 直接回傳 ImageVector
+            val icon = when (markerFilterState) {
+                MarkerFilterState.ALL -> Icons.Default.Visibility
+                MarkerFilterState.CLASSROOMS -> Icons.Default.School
+                MarkerFilterState.BUILDINGS -> Icons.Default.Domain
+                MarkerFilterState.NONE -> Icons.Default.VisibilityOff
+            }
+
+            // (★) 2. (推薦) 也為無障礙功能提供動態的描述
+            val description = when (markerFilterState) {
+                MarkerFilterState.ALL -> "篩選器：顯示全部"
+                MarkerFilterState.CLASSROOMS -> "篩選器：只顯示教室"
+                MarkerFilterState.BUILDINGS -> "篩選器：只顯示建築"
+                MarkerFilterState.NONE -> "篩選器：全部隱藏"
+            }
+
+            // (★) 3. 使用 FloatingActionButton (不是 Extended)
+            FloatingActionButton(
+                onClick = {
+                    // (★) 點擊時，切換到下一個狀態
+                    markerFilterState = when (markerFilterState) {
+                        MarkerFilterState.ALL -> MarkerFilterState.CLASSROOMS
+                        MarkerFilterState.CLASSROOMS -> MarkerFilterState.BUILDINGS
+                        MarkerFilterState.BUILDINGS -> MarkerFilterState.NONE
+                        MarkerFilterState.NONE -> MarkerFilterState.ALL
+                    }
+                },
+                containerColor = MaterialTheme.colorScheme.surface, // (用淺色底)
+                contentColor = MaterialTheme.colorScheme.primary // (用主色字)
+            ) {
+                // (★) 4. 傳入圖示和動態描述
+                Icon(icon, contentDescription = description)
+            }
+        }
+
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp).zIndex(2f)) {
 
             // 搜尋卡（加上 zIndex 確保置頂）
             Card(

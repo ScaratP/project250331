@@ -155,7 +155,7 @@ fun AnnouncementTopBar(
     val lastRefreshed by viewModel.lastRefreshedTime.observeAsState(null)
     val isLoading by viewModel.isLoading.observeAsState(false)
 
-    val categories = listOf("全部", "重要消息", "校內活動", "行政公告", "學術公告", "徵人啟事", "招生放榜", "媒體報導")
+    val categories = listOf("全部", "重要消息", "校內活動", "行政公告", "學術公告", "徵人啟事", "招生放榜")
     var showCategoryMenu by remember { mutableStateOf(false) }
 
     TopAppBar(
@@ -317,7 +317,6 @@ suspend fun fetchAnnouncementsData(): List<Announcement> {
                 "學術公告" to "https://www.nttu.edu.tw/app/index.php?Action=mobileloadmod&Type=mobile_asso_cg_mstr&Nbr=1012",
                 "徵人啟事" to "https://www.nttu.edu.tw/app/index.php?Action=mobileloadmod&Type=mobile_asso_cg_mstr&Nbr=1011",
                 "招生放榜" to "https://www.nttu.edu.tw/app/index.php?Action=mobileloadmod&Type=mobile_asso_cg_mstr&Nbr=1013",
-                "媒體報導" to "https://www.nttu.edu.tw/app/index.php?Action=mobileloadmod&Type=asso_share&Nbr=10"
             )
 
             for ((category, url) in tabUrls) {

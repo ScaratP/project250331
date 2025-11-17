@@ -16,7 +16,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext // <-- 幫你加上 context 的 import
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat.getSystemService
 import androidx.lifecycle.ViewModel
@@ -45,6 +44,8 @@ import com.example.project250311.Schedule.Note.EnhancedNoteScreen
 import com.example.project250311.Schedule.Note.NoteListScreen
 import com.example.project250311.Schedule.Notice.NotificationManagerScreen
 import com.example.project250311.ui.theme.Project250311Theme
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.project250311.Map.IndoorMap.IndoorPositioningViewModel
 
 class MainActivity : ComponentActivity() {
     private val courseViewModel: CourseViewModel by viewModels {
@@ -175,6 +176,7 @@ fun AppWithNavigation(
     var showSubMenu by remember { mutableStateOf(false) }
     var selectedCategory by remember { mutableStateOf<MainCategory?>(null) }
     val bottomSheetState = rememberModalBottomSheetState()
+    val positioningViewModel: IndoorPositioningViewModel = viewModel()
 
     // 根據用戶類型定義可用的主分類
     val mainCategories =
@@ -210,7 +212,6 @@ fun AppWithNavigation(
                         )
                 )
 
-            // +++ 新增「公告」分類 +++
             // 訪客和學生都能看到
             val announcementCategory =
                 MainCategory(
@@ -314,6 +315,7 @@ fun AppWithNavigation(
                 navController = navController,
                 courseViewModel = courseViewModel,
                 announcementViewModel = announcementViewModel,
+                positioningViewModel = positioningViewModel,
                 initialDestination = initialDestination,
                 modifier = Modifier.fillMaxSize()
             )
@@ -412,6 +414,7 @@ fun AppNavHost(
     navController: NavHostController,
     courseViewModel: CourseViewModel,
     announcementViewModel: AnnouncementViewModel,
+    positioningViewModel: IndoorPositioningViewModel,
     initialDestination: String = "map",
     modifier: Modifier = Modifier
 ) {
@@ -426,7 +429,11 @@ fun AppNavHost(
         }
 
         // 室內地圖畫面（不帶參數）
-        composable("indoormap") { IndoorMapScreen() }
+        composable("indoormap") { IndoorMapScreen(
+            navController = navController,
+            positioningViewModel = positioningViewModel, // (★ 6. 傳入共享的實例)
+            autoStart = false // (★ 7. 設為 false 進入瀏覽模式)
+        ) }
 
         // 室內地圖畫面（帶目的地參數）
         composable(
@@ -440,7 +447,15 @@ fun AppNavHost(
                 )
         ) { backStackEntry ->
             val destination = backStackEntry.arguments?.getString("destination") ?: ""
-            IndoorMapScreen(modifier = Modifier)
+
+            // (★) 把共享的 ViewModel 和參數都傳下去
+            IndoorMapScreen(
+                navController = navController,
+                positioningViewModel = positioningViewModel, // (★ 1. 傳入共享的 ViewModel)
+                modifier = Modifier,
+                targetPointId = if (destination.isBlank()) null else destination, // (★ 2. 傳入目的地 ID)
+                autoStart = true // (★ 3. 告訴地圖直接開始導航)
+            )
         }
 
         // 室外 MapScreen 透過 indoor/{building}/{floor}/{target}/{entry} 進入室內導航
@@ -460,6 +475,7 @@ fun AppNavHost(
 
             IndoorMapScreen(
                 navController = navController,
+                positioningViewModel = positioningViewModel,
                 modifier = Modifier,
                 buildingId = if (building.isBlank()) null else building,
                 floorId = if (floor < 0) null else floor,

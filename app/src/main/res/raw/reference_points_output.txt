@@ -238,3 +238,43 @@ ReferencePointEntity("0899d77f-153b-473f-b261-782f4a630581", "sec504", 50.717873
 ReferencePointEntity("692c909c-cb3b-4994-8a12-b594061d6f74", "sec507", 57.78739547729492, 59.077015, R.drawable.sec5, 0, "CLASSROOM", "C", 35),
 ReferencePointEntity("9e4160a9-c56e-4ae0-b505-79cac4e09dc3", "sec505", 62.01310729980469, 54.377628, R.drawable.sec5, 0, "CLASSROOM", "C", 35),
 ReferencePointEntity("8e9c670e-4164-4f9f-b521-66e6cfe8f10a", "sec506", 76.36027526855469, 59.947513580322266, R.drawable.sec5, 0, "CLASSROOM", "C", 35),
+
+ReferencePointEntity("stairs_sea1", "SEA1樓梯", 19.24, 36.04, R.drawable.se1, 0, "STAIRS", "SE", 1)
+ReferencePointEntity("stairs_seb1", "SEB1樓梯", 31.79, 58.43, R.drawable.se1, 0, "STAIRS", "SE", 1)
+ReferencePointEntity("stairs_sec1", "SEC1樓梯", 40.37, 79.25, R.drawable.se1, 0, "STAIRS", "SE", 1)
+
+ReferencePointEntity("stairs_sea2", "SEA2樓梯", 29.04, 38.81, R.drawable.se2, 0, "STAIRS", "SE", 2)
+ReferencePointEntity("stairs_seb2", "SEB2樓梯", 40.05, 61.56, R.drawable.se2, 0, "STAIRS", "SE", 2)
+ReferencePointEntity("stairs_sec2", "SEC2樓梯", 47.71, 82.12, R.drawable.se2, 0, "STAIRS", "SE", 2)
+
+ReferencePointEntity("stairs_sea3", "SEA3樓梯", 28.67, 39.88, R.drawable.se3, 0, "STAIRS", "SE", 3)
+ReferencePointEntity("stairs_seb3", "SEB3樓梯", 40.28, 62.35, R.drawable.se3, 0, "STAIRS", "SE", 3)
+ReferencePointEntity("stairs_sec3", "SEC3樓梯", 47.87, 82.30, R.drawable.se3, 0, "STAIRS", "SE", 3)
+
+ReferencePointEntity("stairs_sea4", "SEA4樓梯", 22.36, 68.46, R.drawable.sea4, 0, "STAIRS", "SEA", 4)
+ReferencePointEntity("stairs_seb4", "SEB4樓梯", 32.70, 70.59, R.drawable.seb4, 0, "STAIRS", "SEB", 4)
+ReferencePointEntity("stairs_sec4", "SEC4樓梯", 29.49, 55.74, R.drawable.sec4, 0, "STAIRS", "SEC", 4)
+
+ReferencePointEntity("stairs_sea5", "SEA5樓梯", 16.89, 72.90, R.drawable.sea5, 0, "STAIRS", "SEA", 5)
+ReferencePointEntity("stairs_sec5", "SEC5樓梯", 23.16, 50.45, R.drawable.sec5, 0, "STAIRS", "SEC", 5)
+
+
+
+ReferencePointEntity("elevator_sea1", "SEA1電梯", 22.35, 35.05, R.drawable.se1, 0,  "ELEVATOR", "SE", 1)
+ReferencePointEntity("elevator_seb1", "SEB1電梯", 34.55, 53.05, R.drawable.se1, 0,  "ELEVATOR", "SE", 1)
+ReferencePointEntity("elevator_sec1", "SEC1電梯", 39.66, 76.83, R.drawable.se1, 0,  "ELEVATOR", "SE", 1)
+
+ReferencePointEntity("elevator_sea2", "SEA2電梯", 33.25, 38.23, R.drawable.se2, 0,  "ELEVATOR", "SE", 2)
+ReferencePointEntity("elevator_seb2", "SEB2電梯", 43.11, 56.66, R.drawable.se2, 0,  "ELEVATOR", "SE", 2)
+ReferencePointEntity("elevator_sec2", "SEC2電梯", 45.95, 79.93, R.drawable.se2, 0,  "ELEVATOR", "SE", 2)
+
+ReferencePointEntity("elevator_sea3", "SEA3電梯", 32.38, 39.50, R.drawable.se3, 0,  "ELEVATOR", "SE", 3)
+ReferencePointEntity("elevator_seb3", "SEB3電梯", 43.05, 57.09, R.drawable.se3, 0,  "ELEVATOR", "SE", 3)
+ReferencePointEntity("elevator_sec3", "SEC3電梯", 46.52, 80.24, R.drawable.se3, 0,  "ELEVATOR", "SE", 3)
+
+ReferencePointEntity("elevator_sea4", "SEA4電梯", 27.26, 71.78, R.drawable.sea4, 0, "ELEVATOR", "SEA", 4)
+ReferencePointEntity("elevator_seb4", "SEB4電梯", 41.52, 56.16, R.drawable.seb4, 0, "ELEVATOR", "SEB", 4)
+ReferencePointEntity("elevator_sec4", "SEC4電梯", 27.77, 50.43, R.drawable.sec4, 0, "ELEVATOR", "SEC", 4)
+
+ReferencePointEntity("elevator_sea5", "SEA5電梯", 22.13, 75.66, R.drawable.sea5, 0, "ELEVATOR", "SEA", 5)
+ReferencePointEntity("elevator_sec5", "SEC5電梯", 20.92, 45.28, R.drawable.sec5, 0, "ELEVATOR", "SEC", 5)

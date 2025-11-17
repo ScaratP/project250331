@@ -131,4 +131,24 @@ dependencies {
     // 添加 Coil 庫
     implementation("io.coil-kt:coil-compose:2.5.0")
 
+    implementation ("org.tensorflow:tensorflow-lite:2.9.0")
+    implementation ("org.tensorflow:tensorflow-lite-support:0.4.3")
+    implementation ("org.json:json:20231013") // 用於解析 label_mappings.json
+
+    // ML Kit Barcode Scanning (掃描 QR Code)
+    implementation ("com.google.mlkit:barcode-scanning:17.3.0")
+
+    // CameraX (驅動相機預覽)
+    implementation ("androidx.camera:camera-core:1.5.1")
+    implementation ("androidx.camera:camera-camera2:1.5.1")
+    implementation ("androidx.camera:camera-lifecycle:1.5.1")
+    implementation ("androidx.camera:camera-view:1.5.1")
+
+    // Jetpack Navigation (用於 NavController, NavHost, composable)
+    implementation ("androidx.navigation:navigation-compose:2.7.7")
+
+    // ViewModel Compose (用於在 Composable 中取得 ViewModel，也就是那個 viewModel() 函式)
+    implementation ("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.2")
+
+
 }
