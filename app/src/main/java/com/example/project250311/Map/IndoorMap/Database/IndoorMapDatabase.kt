@@ -576,11 +576,7 @@ abstract class IndoorMapDatabase : RoomDatabase() {
                     // (★) 我們只取 6 個群組
                     val (id, name, xStr, yStr, imageName, type) = m.destructured
 
-                    // 檢查是否是我們認識的類型
-                    if (type !in PointType.values().map { it.name }) {
-                        Log.w("ImportPoints", "Skipping unknown type: $type in line: $line")
-                        return@forEach
-                    }
+
 
                     // 從圖片名稱 (e.g., "se1") 找到 ( "SE", 1 )
                     val buildingFloor = imageNameToBuildingFloor[imageName] ?: return@forEach

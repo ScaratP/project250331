@@ -634,9 +634,9 @@ fun IndoorMapScreen(
 //                            ) { Text("重建網格") }
 //
 //                            // 顯示/隱藏網格覆蓋
-//                            TextButton(onClick = { showGridOverlay = !showGridOverlay }) {
-//                                Text(if (showGridOverlay) "隱藏網格" else "顯示網格")
-//                            }
+                    TextButton(onClick = { showGridOverlay = !showGridOverlay }) {
+                        Text(if (showGridOverlay) "隱藏網格" else "顯示網格")
+                    }
 //
 //                            // 新增：顯示/隱藏 教室點
 //                            TextButton(onClick = { showClassrooms = !showClassrooms }) {

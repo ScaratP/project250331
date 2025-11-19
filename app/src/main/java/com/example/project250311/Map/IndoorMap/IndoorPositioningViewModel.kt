@@ -27,6 +27,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -457,7 +458,9 @@ class IndoorPositioningViewModel(application: Application) : AndroidViewModel(ap
     val walkableCount: StateFlow<Int> = _walkableCount.asStateFlow()
 
     // DB 的 DAO (ViewModel 需要自己存取DB來快取)
+    private val db = IndoorMapDatabase.getDatabase(context)
     private val gridDao = IndoorMapDatabase.getDatabase(context).gridCacheDao()
+    private val refDao = db.referencePointDao()
     private val gridSample = 2 // (和 IndoorMapScreen 用的網格取樣率一樣)
 
     // 一個 Coroutine Job 來追蹤載入任務
@@ -505,13 +508,16 @@ class IndoorPositioningViewModel(application: Application) : AndroidViewModel(ap
                 // (B) 載入圖片 (同 IndoorMapScreen 的邏輯)
                 val finalBmp = loadAndScaleBitmap(context, imageRes) ?: return@launch
 
+                // 在建立網格前，先抓取這張圖上的所有「參考點」
+                val pointsOnMap = refDao.getReferencePointsByImageId(imageRes).first()
+
                 // (C) 嘗試從 DB 快取載入 Grid
                 val cached = gridDao.get(imageRes, gridSample)
                 val g: Grid
 
                 if (cached != null) {
                     val cells = IndoorPathfinder.run { cached.cells.toBooleanArray(cached.width * cached.height) }
-                    g = IndoorPathfinder.Grid(cached.width, cached.height, cells)
+                    g = Grid(cached.width, cached.height, cells)
                 } else {
                     // (D) 如果 DB 沒快取，自己算一次 Grid
                     g = IndoorPathfinder.bitmapToGridFromWhiteCorridor(
@@ -519,7 +525,8 @@ class IndoorPositioningViewModel(application: Application) : AndroidViewModel(ap
                         sample = gridSample,
                         satMax = 0.12f,
                         valMin = 0.92f,
-                        wallInflate = 3
+                        wallInflate = 3,
+                        referencePoints = pointsOnMap
                     )
 
                     // (E) 算完存回 DB

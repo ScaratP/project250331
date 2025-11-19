@@ -5,6 +5,7 @@ import android.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import com.example.project250311.Map.IndoorMap.Database.ReferencePointEntity
 import com.example.project250311.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.plus
@@ -15,7 +16,7 @@ import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 
-object IndoorPathfinder{
+object IndoorPathfinder {
     // ======================= 資料結構 =======================
     data class Node(
         val x: Int,
@@ -79,7 +80,8 @@ object IndoorPathfinder{
             }
             for (nb in neighbors(grid, cur)) {
                 val step = if (nb.x != cur.x && nb.y != cur.y) 1.41421356 else 1.0
-                val tentative = gScore.getOrDefault(key(cur.x, cur.y), Double.POSITIVE_INFINITY) + step
+                val tentative =
+                    gScore.getOrDefault(key(cur.x, cur.y), Double.POSITIVE_INFINITY) + step
                 val nbKey = key(nb.x, nb.y)
                 if (tentative < gScore.getOrDefault(nbKey, Double.POSITIVE_INFINITY)) {
                     val nnode =
@@ -171,17 +173,42 @@ object IndoorPathfinder{
     }
 
     // ======================= 影像 -> 可通行網格（只認近白走廊） =======================
+    // In: project250311.zip/Map/IndoorMap/IndoorRoute.kt
+
+    // In: project250311.zip/Map/IndoorMap/IndoorRoute.kt
+
+    // ======================= 影像 -> 可通行網格（★ 新邏輯 ★） =======================
     fun bitmapToGridFromWhiteCorridor(
         bitmap: Bitmap,
         sample: Int = 2,
-        satMax: Float = 0.12f, // 放寬以容錯
+        satMax: Float = 0.12f,
         valMin: Float = 0.92f,
-        wallInflate: Int = 3
+        wallInflate: Int = 3,
+        referencePoints: List<ReferencePointEntity> = emptyList() // (★) 依賴這個
     ): Grid {
         val w = (bitmap.width / sample).coerceAtLeast(1)
         val h = (bitmap.height / sample).coerceAtLeast(1)
-        val cells = BooleanArray(w * h) { false }
 
+        // (★) 步驟 1: 建立「保證可行走」的點位集合 (教室、走廊、樓梯等)
+        val pointGridCoords = mutableSetOf<Pair<Int, Int>>()
+        referencePoints.forEach {
+            // (★) 我們把所有「非牆壁」的點位都當作可擴張區域
+            if (it.type == "CLASSROOM" || it.type == "CORRIDOR" || it.type == "STAIRS" || it.type == "ELEVATOR" || it.type == "ENTRANCE" || it.type == "TOILET" || it.type == "OTHER") {
+                val imgX = (it.x.toFloat() / 100f) * bitmap.width
+                val imgY = (it.y.toFloat() / 100f) * bitmap.height
+                val gx = (imgX / sample).toInt()
+                val gy = (imgY / sample).toInt()
+
+                // (★) 擴張 5x5 範圍 (-2 到 +2) 就很夠用了
+                for (dy in -5..5) {
+                    for (dx in -5..5) {
+                        pointGridCoords.add((gx + dx) to (gy + dy))
+                    }
+                }
+            }
+        }
+
+        // isNearWhite 函數不變
         fun isNearWhite(px: Int, py: Int): Boolean {
             if (px !in 0 until bitmap.width || py !in 0 until bitmap.height) return false
             val c = bitmap.getPixel(px, py)
@@ -195,25 +222,52 @@ object IndoorPathfinder{
             return (s <= satMax && v >= valMin)
         }
 
-        for (gy in 0 until h) for (gx in 0 until w) {
-            val sx = gx * sample
-            val sy = gy * sample
-            cells[gy * w + gx] = isNearWhite(sx, sy)
+        // (★) 步驟 2: 預設「全部可行走 (true)」
+        val cells = BooleanArray(w * h) { true }
+
+        // (★) 步驟 3: 標記「牆壁 (false)」
+        for (gy in 0 until h) {
+            for (gx in 0 until w) {
+                val sx = gx * sample
+                val sy = gy * sample
+
+                // (★) 如果「不是」白色走廊，而且「也沒被」標記為教室/走廊點
+                if (!isNearWhite(sx, sy) && (gx to gy) !in pointGridCoords) {
+                    cells[gy * w + gx] = false // 標記為牆壁
+                }
+            }
         }
 
+        // (★) 步驟 4: 膨脹「牆壁」
         if (wallInflate > 0) {
             val out = cells.copyOf()
             fun block(x: Int, y: Int) {
                 if (x in 0 until w && y in 0 until h) out[y * w + x] = false
             }
-            for (y in 0 until h) for (x in 0 until w) if (!cells[y * w + x]) {
-                for (dy in -wallInflate..wallInflate) for (dx in -wallInflate..wallInflate) block(
-                    x + dx,
-                    y + dy
-                )
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    // (★) 如果 (x,y) 是牆壁 (false)
+                    if (!cells[y * w + x]) {
+                        // (★) 就把它周圍 wallInflate 範圍「也」變成牆壁
+                        for (dy in -wallInflate..wallInflate) {
+                            for (dx in -wallInflate..wallInflate) {
+                                block(x + dx, y + dy)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // (★) 步驟 5: (保險) 再次把教室/走廊點強制標回「可行走」
+            // (避免它們被牆壁膨脹蓋掉)
+            pointGridCoords.forEach { (x, y) ->
+                if (x in 0 until w && y in 0 until h) {
+                    out[y * w + x] = true
+                }
             }
             return Grid(w, h, out)
         }
+
         return Grid(w, h, cells)
     }
 
@@ -269,4 +323,57 @@ object IndoorPathfinder{
             else -> R.drawable.se1 // 預設
         }
     }
+
+    // ======================= (★ 新增) 尋找最近可通行點 =======================
+    /**
+     * 從 (x, y) 開始，使用廣度優先搜尋 (BFS) 找到最近的可通行網格
+     * @param grid 網格
+     * @param x 起點 X
+     * @param y 起點 Y
+     * @param maxRange 最大搜尋範圍 (避免無限迴圈)
+     * @return 最近的可通行點 Pair(x, y)，若找不到則為 null
+     */
+    fun findNearestWalkableCell(grid: Grid, x: Int, y: Int, maxRange: Int = 30): Pair<Int, Int>? {
+        if (grid.walkable(x, y)) {
+            return x to y // 如果自己就是，直接回傳
+        }
+
+        val queue = java.util.ArrayDeque<Pair<Int, Int>>()
+        val visited = mutableSetOf<Pair<Int, Int>>()
+
+        queue.add(x to y)
+        visited.add(x to y)
+
+        var currentRange = 0
+
+        while (queue.isNotEmpty() && currentRange < maxRange) {
+            val levelSize = queue.size
+            for (i in 0 until levelSize) {
+                val (cx, cy) = queue.poll()!!
+
+                // 檢查八個方向的鄰居
+                for (dy in -1..1) {
+                    for (dx in -1..1) {
+                        if (dx == 0 && dy == 0) continue
+
+                        val nx = cx + dx
+                        val ny = cy + dy
+                        val neighbor = nx to ny
+
+                        if (nx in 0 until grid.w && ny in 0 until grid.h && neighbor !in visited) {
+                            if (grid.walkable(nx, ny)) {
+                                // 找到了！
+                                return neighbor
+                            }
+                            visited.add(neighbor)
+                            queue.add(neighbor)
+                        }
+                    }
+                }
+            }
+            currentRange++
+        }
+        return null // 超出範圍都找不到
+    }
+
 }
