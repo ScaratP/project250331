@@ -10,7 +10,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.TransformableState
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.transformable
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
@@ -29,6 +31,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -203,10 +206,10 @@ fun perpDist(p: Offset, a: Offset, b: Offset): Float {
 // ======================= 影像 -> 可通行網格（只認近白走廊） =======================
 fun bitmapToGridFromWhiteCorridor(
         bitmap: Bitmap,
-        sample: Int = 2,
-        satMax: Float = 0.12f, // 放寬以容錯
-        valMin: Float = 0.92f,
-        wallInflate: Int = 3
+        sample: Int = 1,
+        satMax: Float = 4.5f, // 放寬以容錯
+        valMin: Float = 0.1f,
+        wallInflate: Int = 0
 ): Grid {
     val w = (bitmap.width / sample).coerceAtLeast(1)
     val h = (bitmap.height / sample).coerceAtLeast(1)
@@ -324,14 +327,34 @@ fun IndoorMapScreen(
     var selectedFloorName by remember { mutableStateOf(floorPlans.first().first) }
     var currentImageRes by remember { mutableStateOf(floorPlans.first().second) }
     var imageBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    // which image resource has been loaded into imageBitmap (set when imageBitmap is assigned)
+    var loadedImageRes by remember { mutableStateOf<Int?>(null) }
+
+    // 視窗互動狀態（宣告必須在 LaunchedEffect 之前，因為 LaunchedEffect 會使用到 minScale）
+    var scale by remember { mutableStateOf(1f) }
+    var offsetX by remember { mutableStateOf(0f) }
+    var offsetY by remember { mutableStateOf(0f) }
+    // 每張圖的動態最小縮放（以螢幕寬度為最小）
+    var minScale by remember { mutableStateOf(1f) }
+    val maxScale = 6f
+
+    val metrics = Resources.getSystem().displayMetrics
+    val screenWidthPx = metrics.widthPixels.toFloat()
+    val screenHeightPx = metrics.heightPixels.toFloat()
+
+    // 容器實際大小（Canvas / Box 可用空間），用來計算置中與 fit-scale
+    var containerWidthPx by remember { mutableStateOf(0f) }
+    var containerHeightPx by remember { mutableStateOf(0f) }
 
     // ===== (2) 載入時先縮圖（依裝置寬高上限） =====
     LaunchedEffect(currentImageRes) {
+        // Capture requested resource id so loadedImageRes reflects the decoded resource (avoid race with state changes)
+        val requestedRes = currentImageRes
         // Decode and scale bitmap off the main thread to avoid UI freezes (was blocking main thread)
         val finalBmp = withContext(Dispatchers.Default) {
             try {
                 // decodeResource is safe to call off main thread
-                val decoded = BitmapFactory.decodeResource(context.resources, currentImageRes) ?: return@withContext null
+                val decoded = BitmapFactory.decodeResource(context.resources, requestedRes) ?: return@withContext null
                 val metrics = Resources.getSystem().displayMetrics
                 val maxW = (metrics.widthPixels * 2f).toInt()
                 val maxH = (metrics.heightPixels * 2f).toInt()
@@ -349,20 +372,49 @@ fun IndoorMapScreen(
             }
         }
 
-        // set imageBitmap on main thread
+        // set imageBitmap on main thread and mark which res was loaded
         imageBitmap = finalBmp?.asImageBitmap()
+        loadedImageRes = if (finalBmp != null) requestedRes else null
+
+        // (imageBitmap will be processed by separate effect that depends on container size)
     }
 
-    // 視窗互動狀態
-    var scale by remember { mutableStateOf(1f) }
-    var offsetX by remember { mutableStateOf(0f) }
-    var offsetY by remember { mutableStateOf(0f) }
-    val transformState = remember {
-        TransformableState { zoom, pan, _ ->
-            scale = (scale * zoom).coerceIn(0.5f, 6f)
-            offsetX += pan.x
-            offsetY += pan.y
+    // 輔助：限制偏移，避免圖片被平移出畫面
+    fun clampOffsets(imageWidth: Float, imageHeight: Float) {
+        val dispW = imageWidth * scale
+        val dispH = imageHeight * scale
+        // 當影像顯示寬度小於容器，水平置中
+        if (dispW <= containerWidthPx) {
+            offsetX = (containerWidthPx - dispW) / 2f
+        } else {
+            val minX = containerWidthPx - dispW
+            val maxX = 0f
+            if (offsetX < minX) offsetX = minX
+            if (offsetX > maxX) offsetX = maxX
         }
+        // 當影像顯示高度小於容器，垂直置中
+        if (dispH <= containerHeightPx) {
+            offsetY = (containerHeightPx - dispH) / 2f
+        } else {
+            val minY = containerHeightPx - dispH
+            val maxY = 0f
+            if (offsetY < minY) offsetY = minY
+            if (offsetY > maxY) offsetY = maxY
+        }
+    }
+
+    // 當圖片或容器尺寸改變時，根據容器寬度計算 minScale 並置中圖片
+    LaunchedEffect(imageBitmap, containerWidthPx, containerHeightPx) {
+        val bmp = imageBitmap?.asAndroidBitmap() ?: return@LaunchedEffect
+        if (containerWidthPx <= 0f || containerHeightPx <= 0f) return@LaunchedEffect
+
+        val fitMin = if (bmp.width > 0) (containerWidthPx / bmp.width.toFloat()) else 1f
+        minScale = fitMin.coerceAtMost(maxScale)
+        // 初始化 scale 與置中偏移（以 container 為基準）
+        scale = minScale
+        offsetX = (containerWidthPx - bmp.width * scale) / 2f
+        offsetY = (containerHeightPx - bmp.height * scale) / 2f
+        clampOffsets(bmp.width.toFloat(), bmp.height.toFloat())
     }
 
     // 導航狀態
@@ -383,6 +435,8 @@ fun IndoorMapScreen(
     // 新增：Overlay 與偵錯統計（原本有使用到，但未宣告）
     var overlay by remember { mutableStateOf<ImageBitmap?>(null) }
     var walkableCount by remember { mutableStateOf(0) }
+    // 各樓層診斷報告（供比對 se1 與其他樓層）
+    var floorStatsReport by remember { mutableStateOf("") }
 
     // 顯示教室點
     var showClassrooms by remember { mutableStateOf(false) }
@@ -402,10 +456,30 @@ fun IndoorMapScreen(
         return gx to gy
     }
 
-    // 依當前樓層圖片載入/清除教室點
+    // Preview state: when entryPointId is on a different floor than target, we first show entry floor preview
+    var previewEntryPhase by remember { mutableStateOf(false) }
+    var previewEntryEntity by remember { mutableStateOf<ReferencePointEntity?>(null) }
+    var previewTargetEntity by remember { mutableStateOf<ReferencePointEntity?>(null) }
+    var previewTargetFloorName by remember { mutableStateOf<String?>(null) }
+
+    // 依當前樓層圖片載入/清除教室點（同時包含 STAIRS）
     LaunchedEffect(currentImageRes, showClassrooms) {
         if (showClassrooms) {
-            refDao.getClassroomPointsByImageId(currentImageRes).collect { classroomPoints = it }
+            // Collect the full reference-points flow and filter locally so we show both CLASSROOM and STAIRS
+            // This avoids adding a separate DAO method for STAIRS while keeping the UI reactive to DB changes.
+            refDao.getAllReferencePoints().collect { all ->
+                classroomPoints = all.filter { rp ->
+                    rp.imageId == currentImageRes && (rp.type.equals("CLASSROOM", true) || rp.type.equals("STAIRS", true))
+                }
+                // Debug: log count and sample of returned points so we can confirm STAIRS are present
+                try {
+                    Log.d(
+                        "IndoorMap.UI",
+                        "showClassrooms=$showClassrooms currentImageRes=$currentImageRes classroomPoints=${classroomPoints.size} sample=${classroomPoints.firstOrNull()?.let { "${it.id}/${it.type}/${it.imageId}" } }"
+                    )
+                } catch (_: Exception) {
+                }
+            }
         } else {
             classroomPoints = emptyList()
         }
@@ -420,51 +494,18 @@ fun IndoorMapScreen(
         val (gx, gy) = imageToGrid(ePt, g, gridSample)
 
         scope.launch(Dispatchers.Default) {
-            try {
-                // set grid cell debug info
-                startGridCell = sx to sy
-                goalGridCell = gx to gy
-                startWalkable = g.walkable(sx, sy)
-                goalWalkable = g.walkable(gx, gy)
-
-                if (!startWalkable!! || !goalWalkable!!) {
-                    val msg = "startWalkable=${startWalkable} goalWalkable=${goalWalkable}"
-                    Log.d("IndoorMap", "recomputePathAsync abort: $msg")
-                    withContext(Dispatchers.Main) {
-                        debugInfo = "無法計算：起點/終點不可通行 ($msg)"
-                        path = emptyList()
-                    }
-                    return@launch
-                }
-
-                val t0 = System.currentTimeMillis()
-                val raw = aStar(g, sx, sy, gx, gy)
-                val took = System.currentTimeMillis() - t0
-                Log.d("IndoorMap", "aStar finished size=${raw.size} took=${took}ms grid=${g.w}x${g.h}")
-
-                if (raw.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        debugInfo = "aStar 無路徑 (計算 ${took}ms)"
-                        path = emptyList()
-                    }
-                    return@launch
-                }
-                val vis = smoothByVisibility(raw, g)
-                val px = vis.map { node -> Offset((node.x + 0.5f) * gridSample, (node.y + 0.5f) * gridSample) }
-                val simplified = rdp(px, eps = (gridSample * 0.75f))
-                withContext(Dispatchers.Main) {
-                    path = simplified
-                    debugInfo = "找到路徑: raw=${raw.size} vis=${vis.size} simplified=${simplified.size} (${took}ms)"
-                }
-            } catch (e: CancellationException) {
-                Log.d("IndoorMap", "recomputePathAsync cancelled")
-            } catch (e: Exception) {
-                Log.e("IndoorMap", "recomputePathAsync error", e)
-                withContext(Dispatchers.Main) {
-                    debugInfo = "計算錯誤: ${e.localizedMessage}"
-                    path = emptyList()
-                }
+            val raw = aStar(g, sx, sy, gx, gy)
+            if (raw.isEmpty()) {
+                withContext(Dispatchers.Main) { path = emptyList() }
+                return@launch
             }
+            val vis = smoothByVisibility(raw, g)
+            val px =
+                    vis.map { node ->
+                        Offset((node.x + 0.5f) * gridSample, (node.y + 0.5f) * gridSample)
+                    }
+            val simplified = rdp(px, eps = (gridSample * 0.75f))
+            withContext(Dispatchers.Main) { path = simplified }
         }
     }
 
@@ -479,15 +520,84 @@ fun IndoorMapScreen(
             val all = withContext(Dispatchers.IO) { refDao.getAllReferencePoints().first() }
             val targetEntity = all.firstOrNull { it.id == targetPointId }
             if (targetEntity != null) {
-                // 設定樓層圖片資源
-                currentImageRes = targetEntity.imageId
+                try {
+                    val tResName = try { context.resources.getResourceEntryName(targetEntity.imageId) } catch (_: Exception) { "?" }
+                    Log.d("IndoorMap.UI", "LaunchedEffect target=${targetEntity.id} floorId=${targetEntity.floorId} image=$tResName")
+                } catch (_: Exception) {}
+                // 不要一開始就自動跳到目標樓層圖片（會導致先顯示目標再跳回入口），
+                // 改為在下面分支中依情況載入對應圖片：若需要 preview 則載入 entry 的圖片，否則載入 target 的圖片。
+                // 接著在各自分支等待 imageBitmap 再做後續計算。
 
-                // 等待 imageBitmap 載入
-                // imageBitmap 會因 currentImageRes 而在另一個 LaunchedEffect 載入
-                // 監聽 imageBitmap 非空
+                // 找入口：優先使用 entryPointId，否則尋找 building+floor 的 ENTRANCE
+                val entryEntity = if (!entryPointId.isNullOrBlank()) all.firstOrNull { it.id == entryPointId } else {
+                    all.firstOrNull { it.buildingId == targetEntity.buildingId && it.floorId == targetEntity.floorId && it.type.equals("ENTRANCE", true) }
+                }
+
+                // 如果 entryEntity 存在且和目標不在同一樓層，我們進入 entry-preview 流程
+                if (entryEntity != null && entryEntity.floorId != targetEntity.floorId) {
+                    // set preview vars
+                    previewEntryPhase = true
+                    previewEntryEntity = entryEntity
+                    previewTargetEntity = targetEntity
+                    try {
+                        val floorEntity = withContext(Dispatchers.IO) { db.floorDao().getFloorById(entryEntity.floorId) }
+                        previewTargetFloorName = "${targetEntity.buildingId}${targetEntity.floorId}樓"
+                    } catch (_: Exception) {
+                        previewTargetFloorName = "${targetEntity.floorId}樓"
+                    }
+
+                    // set current image to entry's floor image and wait for bitmap
+                    currentImageRes = entryEntity.imageId
+                    withContext(Dispatchers.Default) {
+                        var attempts2 = 0
+                        val wantRes = entryEntity.imageId
+                        while (loadedImageRes != wantRes && attempts2 < 100) {
+                            attempts2++
+                            delay(60)
+                        }
+                    }
+
+                    val bmp2 = imageBitmap?.asAndroidBitmap()
+                    if (bmp2 != null) {
+                        // find entrance on that floor (ENTRANCE) and the target vertical candidate (STAIRS/ELEVATOR)
+                        val floorPoints = all.filter { it.imageId == entryEntity.imageId }
+                        val entranceOnFloor = floorPoints.firstOrNull { it.type.equals("ENTRANCE", true) }
+                        val vertical = floorPoints.filter { it.type.equals("STAIRS", true) || it.type.equals("ELEVATOR", true) }
+
+                        // Simplified deterministic matching: use building prefix to prefer elevator/stairs and match by name fragment
+                        val prefix = targetEntity.id.takeWhile { it.isLetter() }.lowercase()
+                        val preferredType = when (prefix) {
+                            "sea", "seb" -> "ELEVATOR"
+                            "sec" -> "STAIRS"
+                            else -> null
+                        }
+                        val entryFloorNumStr = try { context.resources.getResourceEntryName(entryEntity.imageId).takeLastWhile { it.isDigit() } } catch (_: Exception) { null }
+                        val wantFrag = if (!prefix.isBlank() && !entryFloorNumStr.isNullOrBlank()) (prefix + entryFloorNumStr).lowercase() else null
+
+                        var targetVertical: ReferencePointEntity? = null
+                        if (wantFrag != null) targetVertical = vertical.firstOrNull { it.buildingId.equals(targetEntity.buildingId, true) && it.name.lowercase().contains(wantFrag) }
+                        if (targetVertical == null && preferredType != null) targetVertical = vertical.firstOrNull { it.buildingId.equals(targetEntity.buildingId, true) && it.type.equals(preferredType, true) }
+                        if (targetVertical == null && prefix.isNotBlank()) targetVertical = vertical.firstOrNull { it.buildingId.equals(targetEntity.buildingId, true) && it.name.lowercase().contains(prefix) }
+                        if (targetVertical == null) targetVertical = vertical.firstOrNull()
+
+                        val sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
+                        val gPoint = targetVertical?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
+
+                        start = sPoint
+                        goal = gPoint
+                        // ensure the UI shows entrance and vertical points
+                        showClassrooms = true
+                        if (autoStart) recomputePathAsync()
+                    }
+                    return@LaunchedEffect
+                }
+
+                // 若不需 entry-preview，則載入並等待目標樓層圖片後進行正常導航行為
+                currentImageRes = targetEntity.imageId
                 withContext(Dispatchers.Default) {
-                    var attempts = 0
-                    while (imageBitmap == null && attempts < 50) {
+                        var attempts = 0
+                        val wantRes = targetEntity.imageId
+                    while (loadedImageRes != wantRes && attempts < 100) {
                         attempts++
                         delay(60)
                     }
@@ -499,8 +609,64 @@ fun IndoorMapScreen(
                     val entryEntity = if (!entryPointId.isNullOrBlank()) all.firstOrNull { it.id == entryPointId } else {
                         all.firstOrNull { it.buildingId == targetEntity.buildingId && it.floorId == targetEntity.floorId && it.type.equals("ENTRANCE", true) }
                     }
+                    try {
+                        if (entryEntity != null) {
+                            val eRes = try { context.resources.getResourceEntryName(entryEntity.imageId) } catch (_: Exception) { "?" }
+                            Log.d("IndoorMap.UI", "Resolved entryEntity=${entryEntity.id} floorId=${entryEntity.floorId} image=$eRes name=${entryEntity.name}")
+                        } else {
+                            Log.d("IndoorMap.UI", "No entryEntity resolved for entryPointId=$entryPointId; falling back to ENTRANCE lookup")
+                        }
+                    } catch (_: Exception) {}
 
-                    // 若無入口仍嘗試從 DB 取得任一教室點作為 goal（不會導致 crash）
+                    // 如果 entryEntity 存在且和目標不在同一樓層，我們進入 "entry preview" 階段：先顯示 entry 的樓層（例如 1F），
+                    // 並計算入口(ENTRANCE) -> 該樓層的樓梯/電梯 的路徑。按下底部按鈕後會切換到目標樓層，並從該樓層的相對樓梯/電梯導航到教室。
+                    if (entryEntity != null && entryEntity.floorId != targetEntity.floorId) {
+                        // set preview vars
+                        previewEntryPhase = true
+                        previewEntryEntity = entryEntity
+                        previewTargetEntity = targetEntity
+                        // try to resolve a human-friendly floor name for button label
+                        try {
+                            val floorEntity = withContext(Dispatchers.IO) { db.floorDao().getFloorById(entryEntity.floorId) }
+                            previewTargetFloorName = "${targetEntity.buildingId}${targetEntity.floorId}樓"
+                        } catch (_: Exception) {
+                            previewTargetFloorName = "${targetEntity.floorId}樓"
+                        }
+
+                        // set current image to entry's floor image
+                        currentImageRes = entryEntity.imageId
+
+                        // wait for image bitmap for entry floor
+                        withContext(Dispatchers.Default) {
+                            var attempts2 = 0
+                            val wantRes2 = entryEntity.imageId
+                            while (loadedImageRes != wantRes2 && attempts2 < 100) {
+                                attempts2++
+                                delay(60)
+                            }
+                        }
+
+                        val bmp2 = imageBitmap?.asAndroidBitmap()
+                        if (bmp2 != null) {
+                            // find entrance on that floor (ENTRANCE) and the target vertical candidate (STAIRS/ELEVATOR)
+                            val floorPoints = all.filter { it.imageId == entryEntity.imageId }
+                            val entranceOnFloor = floorPoints.firstOrNull { it.type.equals("ENTRANCE", true) }
+                            val vertical = floorPoints.filter { it.type.equals("STAIRS", true) || it.type.equals("ELEVATOR", true) }
+                            val targetVertical = vertical.firstOrNull { it.id == entryEntity.id } ?: vertical.firstOrNull()
+
+                            val sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
+                            val gPoint = targetVertical?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
+
+                            start = sPoint
+                            goal = gPoint
+                            // ensure the UI shows entrance and vertical points
+                            showClassrooms = true
+                            if (autoStart) recomputePathAsync()
+                        }
+                        return@LaunchedEffect
+                    }
+
+                    // 若無 entry preview required，正常行為：用 entryEntity 或 floor ENTRANCE 作為 start，目標為目標教室
                     val s = entryEntity?.let { Offset((it.x.toFloat() / 100f) * bmp.width, (it.y.toFloat() / 100f) * bmp.height) }
                     val g = Offset((targetEntity.x.toFloat() / 100f) * bmp.width, (targetEntity.y.toFloat() / 100f) * bmp.height)
 
@@ -539,6 +705,36 @@ fun IndoorMapScreen(
             grid = g
             walkableCount = cells.count { it }
             overlay = ov
+        }
+    }
+
+    // ===== 快速診斷：掃描所有 floorPlans，計算以目前閾值判定下的可走格百分比（離線/背景執行） =====
+    LaunchedEffect(gridSample) {
+        // use same strict parameters as current pipeline so we can compare
+        scope.launch(Dispatchers.Default) {
+            val sb = StringBuilder()
+            try {
+                for ((name, resId) in floorPlans) {
+                    val bmp = BitmapFactory.decodeResource(context.resources, resId) ?: continue
+                    val g = bitmapToGridFromWhiteCorridor(
+                        bitmap = bmp,
+                        sample = gridSample,
+                        satMax = 0.12f,
+                        valMin = 0.92f,
+                        wallInflate = 3
+                    )
+                    val walkable = g.cells.count { it }
+                    val total = g.w * g.h
+                    val pct = if (total == 0) 0 else (walkable * 100 / total)
+                    sb.append("$name: ${walkable}/$total ($pct%)\n")
+                    Log.d("IndoorMap.Diag", "$name -> walkable=$walkable total=$total pct=$pct% grid=${g.w}x${g.h}")
+                }
+            } catch (e: Exception) {
+                sb.append("diagnostic error: ${e.message}")
+            }
+            withContext(Dispatchers.Main) {
+                floorStatsReport = sb.toString()
+            }
         }
     }
 
@@ -694,28 +890,50 @@ fun IndoorMapScreen(
                 )
             }
     ) { padding ->
-        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).padding(padding)) {
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).padding(padding)
+            .onSizeChanged { containerWidthPx = it.width.toFloat(); containerHeightPx = it.height.toFloat() }) {
             imageBitmap?.let { bmp ->
                 Box(
                         Modifier.fillMaxSize()
                                 .clipToBounds()
-                                .transformable(transformState)
+                                // 雙擊處理器
                                 .pointerInput(Unit) {
-                                    detectTapGestures(
-                                            onDoubleTap = { p ->
-                                                val ip =
-                                                        screenToImage(p) ?: return@detectTapGestures
-                                                if (start == null) start = ip
-                                                else if (goal == null) {
-                                                    goal = ip
-                                                    recomputePathAsync()
-                                                } else {
-                                                    start = ip
-                                                    goal = null
-                                                    path = emptyList()
-                                                }
-                                            }
-                                    )
+                                    detectTapGestures(onDoubleTap = { p ->
+                                        val ip = screenToImage(p) ?: return@detectTapGestures
+                                        if (start == null) start = ip
+                                        else if (goal == null) {
+                                            goal = ip
+                                            recomputePathAsync()
+                                        } else {
+                                            start = ip
+                                            goal = null
+                                            path = emptyList()
+                                        }
+                                    })
+                                }
+                                // 變形（捏合 + 平移）處理器，錨點為手勢中心
+                                .pointerInput(Unit) {
+                                    detectTransformGestures { centroid, pan, zoom, _ ->
+                                        val bmp = imageBitmap ?: return@detectTransformGestures
+                                        val oldScale = scale
+                                        val newScale = (oldScale * zoom).coerceIn(minScale, maxScale)
+
+                                        // 縮放前手勢中心在影像座標的對應點
+                                        val imgX = (centroid.x - offsetX) / oldScale
+                                        val imgY = (centroid.y - offsetY) / oldScale
+
+                                        // compute new offsets so imgX,imgY stays under centroid
+                                        val newOffsetX = centroid.x - imgX * newScale
+                                        val newOffsetY = centroid.y - imgY * newScale
+
+                                        // apply pan delta
+                                        offsetX = newOffsetX + pan.x
+                                        offsetY = newOffsetY + pan.y
+
+                                        scale = newScale
+                                        // clamp to keep image visible
+                                        clampOffsets(bmp.width.toFloat(), bmp.height.toFloat())
+                                    }
                                 }
                 ) {
                     // ===== (1) 單一 Canvas，且只畫「可見區域」 =====
@@ -867,6 +1085,82 @@ fun IndoorMapScreen(
                     tint = MaterialTheme.colorScheme.onPrimary
                 )
             }
+
+                // 若處於 entry preview 階段，顯示底部按鈕讓使用者表示「已到達指定樓層」，按下後切換到目標樓層並計算從該樓層垂直點到教室的路徑
+                if (previewEntryPhase && previewEntryEntity != null && previewTargetEntity != null) {
+                    Box(modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(12.dp)
+                        .zIndex(3f)) {
+                        Button(onClick = {
+                            scope.launch {
+                                // 切換到目標樓層圖片
+                                val target = previewTargetEntity ?: return@launch
+                                val entry = previewEntryEntity ?: return@launch
+                                // set image to target floor, wait until the correct resource is loaded
+                                Log.d("IndoorMap.UI", "Arrival button pressed: switching to target=${target.id} imageId=${target.imageId}")
+                                currentImageRes = target.imageId
+                                withContext(Dispatchers.Default) {
+                                    var attempts = 0
+                                    val wantRes = target.imageId
+                                    while (loadedImageRes != wantRes && attempts < 100) {
+                                        attempts++
+                                        delay(60)
+                                    }
+                                }
+
+                                val bmp = if (loadedImageRes == target.imageId) imageBitmap?.asAndroidBitmap() else null
+                                if (bmp == null) {
+                                    Log.d("IndoorMap.UI", "Target image not ready: want=${target.imageId} loaded=${loadedImageRes}")
+                                    return@launch
+                                }
+
+                                // 查找目標樓層的垂直點候選
+                                val all = withContext(Dispatchers.IO) { refDao.getAllReferencePoints().first() }
+                                val destCandidates = all.filter { it.imageId == target.imageId && (it.type.equals("STAIRS", true) || it.type.equals("ELEVATOR", true)) }
+
+                                // Simplified deterministic mapping: prefer elevator/stairs by building prefix
+                                var matched: ReferencePointEntity? = null
+                                try {
+                                    val resName = try { context.resources.getResourceEntryName(target.imageId) } catch (_: Exception) { null }
+                                    val floorNumStr = resName?.takeLastWhile { it.isDigit() }
+                                    val prefix = entry.name.takeWhile { it.isLetter() }.lowercase()
+                                    val preferredType = when (prefix) {
+                                        "sea", "seb" -> "ELEVATOR"
+                                        "sec" -> "STAIRS"
+                                        else -> null
+                                    }
+
+                                    val wantFragment = if (!prefix.isBlank() && !floorNumStr.isNullOrBlank()) (prefix + floorNumStr).lowercase() else null
+                                    val stairsAll = all.filter { it.type.equals("STAIRS", true) || it.type.equals("ELEVATOR", true) }
+                                    val destCandidatesFiltered = stairsAll.filter { it.imageId == target.imageId }
+
+                                    if (wantFragment != null) matched = destCandidatesFiltered.firstOrNull { it.buildingId.equals(target.buildingId, true) && it.name.lowercase().contains(wantFragment) }
+                                    if (matched == null && preferredType != null) matched = destCandidatesFiltered.firstOrNull { it.buildingId.equals(target.buildingId, true) && it.type.equals(preferredType, true) }
+                                    if (matched == null && prefix.isNotBlank()) matched = destCandidatesFiltered.firstOrNull { it.buildingId.equals(target.buildingId, true) && it.name.lowercase().contains(prefix) }
+                                    if (matched == null) matched = destCandidatesFiltered.firstOrNull()
+                                } catch (e: Exception) {
+                                    Log.d("IndoorMap.UI", "matching stairs failed: ${e.message}")
+                                }
+
+                                Log.d("IndoorMap.UI", "matched vertical=${matched?.id ?: "<null>"} name=${matched?.name ?: "-"} type=${matched?.type ?: "-"} destCandidates=${destCandidates.size}")
+
+                                // 如果 matched 不為 null，依新圖片大小計算 start 與 goal
+                                val startPt = matched?.let { Offset((it.x.toFloat() / 100f) * bmp.width, (it.y.toFloat() / 100f) * bmp.height) }
+                                val goalPt = Offset((target.x.toFloat() / 100f) * bmp.width, (target.y.toFloat() / 100f) * bmp.height)
+
+                                start = startPt
+                                goal = goalPt
+                                previewEntryPhase = false
+                                // 顯示教室點並開始計算
+                                showClassrooms = true
+                                recomputePathAsync()
+                            }
+                        }) {
+                            Text(text = "已到達 ${previewTargetFloorName ?: "目標樓層"}")
+                        }
+                    }
+                }
 
             // 顯示 debug 訊息（若有）
             if (debugInfo.isNotBlank()) {

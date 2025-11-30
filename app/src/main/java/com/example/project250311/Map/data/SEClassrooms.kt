@@ -239,7 +239,7 @@ object SEClassrooms {
         CustomPoint(LatLng(22.737871, 121.066302), "SEC308", "理工學院C棟3F - 教室"),
         CustomPoint(LatLng(22.737862, 121.066247), "SEC309", "理工學院C棟3F - 教室"),
         CustomPoint(LatLng(22.737852, 121.066184), "SEC310", "理工學院C棟3F - 教室"),
-        CustomPoint(LatLng(22.737839, 121.066012), "SEC311", "理工學院C棟3F - 教室"),
+        CustomPoint(LatLng(22.737839, 121.066012), "SEC311", "理工學院C棟3F - 階梯教室"),
         CustomPoint(LatLng(22.737891, 121.065936), "SEC312", "理工學院C棟3F - 教室"),
         CustomPoint(LatLng(22.737934, 121.065915), "SEC313", "理工學院C棟3F - 教室"),
 

@@ -516,8 +516,10 @@ abstract class IndoorMapDatabase : RoomDatabase() {
                     )
             database.referencePointDao().insertReferencePoint(entrancePoint)
 
-            // 4. 匯入教室點（改由 raw 檔案解析）
+            // 4. 匯入教室點與樓梯點（改由 raw 檔案解析）
             importClassroomPointsFromRaw(context, database)
+            // 新增：自動匯入 stairs 資料（type = "STAIRS"）
+            importStairsPointsFromRaw(context, database)
 
             // 5. 添加走廊向量
             val corridorVectors = getDefaultCorridorVectors()
@@ -581,6 +583,8 @@ abstract class IndoorMapDatabase : RoomDatabase() {
 
             // 3) 重新匯入所有教室點（REPLACE upsert，修正舊 imageId 與缺漏）
             importClassroomPointsFromRaw(context, database)
+            // 新增：如有 stairs 的輸出檔也一併匯入
+            importStairsPointsFromRaw(context, database)
         }
 
         // 由 res/raw/reference_points_output.txt 解析教室點並寫入 DB
@@ -643,6 +647,73 @@ abstract class IndoorMapDatabase : RoomDatabase() {
                                     type = "CLASSROOM",
                                     buildingId = buildingId, // 關鍵：使用對應建築
                                     floorId = floorEntity.id, // 關鍵：使用該建築 + 樓層的 floorId
+                                    isUserDefined = false
+                            )
+                }
+            }
+
+            if (imported.isNotEmpty()) {
+                database.referencePointDao().insertAllReferencePoints(imported)
+            }
+        }
+
+        // 由 res/raw/reference_points_stairs_output.txt 解析樓梯/電梯點並寫入 DB
+        private suspend fun importStairsPointsFromRaw(
+                context: Context,
+                database: IndoorMapDatabase
+        ) {
+            // 使用和教室相同的 image -> (building, floor) 映射
+            val allowedImageToBuildingFloor =
+                    mapOf(
+                            "se1" to ("SE" to 1),
+                            "se2" to ("SE" to 2),
+                            "se3" to ("SE" to 3),
+                            "sea4" to ("SE" to 4),
+                            "sea5" to ("SE" to 5),
+                            "seb4" to ("SEB" to 4),
+                            "sec4" to ("SEC" to 4),
+                            "sec5" to ("SEC" to 5)
+                    )
+
+            val pattern =
+                    Regex(
+                            """ReferencePointEntity\("([^"]+)",\s*"([^"]+)",\s*([-0-9.]+),\s*([-0-9.]+),\s*R\.drawable\.([A-Za-z0-9_]+),\s*\d+,\s*"([A-Z_]+)""""
+                    )
+
+            val imported = mutableListOf<ReferencePointEntity>()
+            val resId = R.raw.reference_points_stairs_output
+            context.resources.openRawResource(resId).bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    val m = pattern.find(line) ?: return@forEach
+                    val (id, name, xStr, yStr, imageName, type) = m.destructured
+                    if (type != "STAIRS") return@forEach
+
+                    val buildingFloor = allowedImageToBuildingFloor[imageName] ?: return@forEach
+                    val (buildingId, floorNumber) = buildingFloor
+
+                    val imageId =
+                            context.resources.getIdentifier(
+                                    imageName,
+                                    "drawable",
+                                    context.packageName
+                            )
+                    if (imageId == 0) return@forEach
+
+                    val floorEntity =
+                            database.floorDao().getFloorByBuildingAndNumber(buildingId, floorNumber)
+                                    ?: return@forEach
+
+                    imported +=
+                            ReferencePointEntity(
+                                    id = id,
+                                    name = name,
+                                    x = xStr.toDoubleOrNull() ?: return@forEach,
+                                    y = yStr.toDoubleOrNull() ?: return@forEach,
+                                    imageId = imageId,
+                                    scanCount = 0,
+                                    type = "STAIRS",
+                                    buildingId = buildingId,
+                                    floorId = floorEntity.id,
                                     isUserDefined = false
                             )
                 }

@@ -54,6 +54,7 @@ import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
 import com.example.project250311.R
+import android.util.Log
 import com.google.android.gms.maps.model.Dot
 import com.google.android.gms.maps.model.Gap
 import com.google.android.gms.maps.model.PatternItem
@@ -291,7 +292,9 @@ fun MapScreen(navController: NavHostController) {
         ) {
             // A. 顯示「你的位置」Marker
             currentLoc?.let {
-                val icon = markerLargeDescState.value ?: getResizedBitmapDescriptor(context, R.drawable.marker, 120, 120)
+                // 避免在 Compose 組合階段同步 decode/scale（會導致回到地圖時卡頓），
+                // 使用事先 background 建立的 descriptor；若尚未完成，改用預設地標以免在主線程做重工作
+                val icon = markerLargeDescState.value ?: com.google.android.gms.maps.model.BitmapDescriptorFactory.defaultMarker()
                 Marker(state = MarkerState(it), title = "你的位置", icon = icon)
             }
 
@@ -300,7 +303,7 @@ fun MapScreen(navController: NavHostController) {
                 Marker(
                     state = MarkerState(destLatLng),
                     title = "目的地",
-                    icon = markerLargeDescState.value ?: getResizedBitmapDescriptor(context, R.drawable.marker, 120, 120),
+                    icon = markerLargeDescState.value ?: com.google.android.gms.maps.model.BitmapDescriptorFactory.defaultMarker(),
                     onClick = {
                         destination = null
                         routePoints = emptyList()
@@ -311,17 +314,22 @@ fun MapScreen(navController: NavHostController) {
             }
 
             // C. 顯示自訂地點 Marker
+            // 改為：不要在戶外地圖上顯示教室（名稱以 se 開頭）的標註，但保留搜尋與功能
             customPoints.forEach { custom ->
-                Marker(state = MarkerState(custom.location), title = custom.name, icon = markerSmallDescState.value ?: getResizedBitmapDescriptor(context, R.drawable.marker, 80, 80), onClick = {
-                    selectedPoint = custom
-                    // 當點擊 Marker 時，如果是教室則預先解析室內圖資源 id 以便顯示按鈕
-                    if (custom.name.startsWith("se", true)) {
-                        indoorResId = findIndoorMapResId(context, custom.name)
-                    } else {
-                        indoorResId = 0
-                    }
-                    false
-                })
+                if (!custom.name.startsWith("se", true)) {
+                    // 同上：若尚未預先建立小圖示，使用系統預設以避免主線程解碼造成卡頓
+                    Marker(
+                        state = MarkerState(custom.location),
+                        title = custom.name,
+                        icon = markerSmallDescState.value ?: com.google.android.gms.maps.model.BitmapDescriptorFactory.defaultMarker(),
+                        onClick = {
+                            selectedPoint = custom
+                            // 教室的自訂點不需要處理室內地圖 id
+                            indoorResId = 0
+                            false
+                        }
+                    )
+                } 
             }
 
             // D. 畫三段 Polyline：灰色虛線 + 藍色實線 + 灰色虛線
@@ -641,11 +649,25 @@ fun MapScreen(navController: NavHostController) {
                                                 if (destRef != null) {
                                                     val buildingId = destRef.buildingId
                                                     val floorId = destRef.floorId
-                                                    val floorPoints = refDao.getReferencePointsByFloor(buildingId, floorId).first()
-                                                    val entranceEntity = floorPoints.firstOrNull { it.type.equals("ENTRANCE", true) }
+                                                    // Choose an entry point on 1F deterministically based on building prefix
+                                                    val floorOnePoints = refDao.getReferencePointsByFloor(buildingId, 1).first()
+                                                    val vertical1 = floorOnePoints.filter { it.type.equals("STAIRS", true) || it.type.equals("ELEVATOR", true) }
+                                                    val prefix = destRef.id.takeWhile { it.isLetter() }.lowercase()
+                                                    val preferredType = when (prefix) {
+                                                        "sea", "seb" -> "ELEVATOR"
+                                                        "sec" -> "STAIRS"
+                                                        else -> null
+                                                    }
+                                                    val wantFrag1 = if (prefix.isNotBlank()) (prefix + "1") else null
+                                                    var chosenEntry: com.example.project250311.Map.IndoorMap.Database.ReferencePointEntity? = null
+                                                    if (wantFrag1 != null) chosenEntry = vertical1.firstOrNull { it.buildingId.equals(buildingId, true) && it.name.lowercase().contains(wantFrag1) }
+                                                    if (chosenEntry == null && preferredType != null) chosenEntry = vertical1.firstOrNull { it.buildingId.equals(buildingId, true) && it.type.equals(preferredType, true) }
+                                                    if (chosenEntry == null && prefix.isNotBlank()) chosenEntry = vertical1.firstOrNull { it.buildingId.equals(buildingId, true) && it.name.lowercase().contains(prefix) }
+                                                    if (chosenEntry == null) chosenEntry = vertical1.firstOrNull()
+
                                                     val entranceLatLng = SEEntrances.getNearestEntrance(destRef.name).location
 
-                                                    // 把導航目的地改為入口
+                                                    // 把導航目的地改為入口（戶外路徑仍使用外部地點 mapping）
                                                     destination = entranceLatLng
                                                     lastRerouteLoc = originLatLng
                                                     travelTimeText = null
@@ -658,12 +680,17 @@ fun MapScreen(navController: NavHostController) {
                                                         onError = { isRouting = false; errorMsg = it; scope.launch { delay(3000); errorMsg = null } }
                                                     )
 
-                                                    // 設定待進入室內導航的參數（entryPointId 使用 entranceEntity?.id 或 null）
+                                                    // 設定待進入室內導航的參數（entryPointId 使用選出的 1F vertical id 或 null）
+                                                    if (chosenEntry != null) {
+                                                        Log.d("MapScreen.Indoor", "Chosen 1F entry id=${chosenEntry.id} name=${chosenEntry.name} imageId=${chosenEntry.imageId} floorId=${chosenEntry.floorId}")
+                                                    } else {
+                                                        Log.d("MapScreen.Indoor", "No 1F vertical entry found; using nearest SEEntrances location=$entranceLatLng for destination=${destRef.id}")
+                                                    }
                                                     pendingIndoorParams = IndoorNavParams(
                                                         buildingId = buildingId,
                                                         floorId = floorId,
                                                         targetPointId = destRef.id,
-                                                        entryPointId = entranceEntity?.id
+                                                        entryPointId = chosenEntry?.id
                                                     )
                                                 }
                                             } catch (e: Exception) {
@@ -728,6 +755,7 @@ fun MapScreen(navController: NavHostController) {
                             // 透過 navController 導向室內地圖；路由格式為 indoor/{building}/{floor}/{target}/{entry}
                             try {
                                 val route = "indoor/${params.buildingId}/${params.floorId}/${params.targetPointId}/${params.entryPointId ?: ""}"
+                                Log.d("MapScreen.Indoor", "Navigating to indoor route=$route (params=$params)")
                                 navController.navigate(route)
                             } catch (e: Exception) {
                                 errorMsg = "開啟室內導航失敗：${e.localizedMessage}"
