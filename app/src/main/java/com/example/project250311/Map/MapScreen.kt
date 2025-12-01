@@ -927,7 +927,7 @@ fun drawRoute(
     onStart()
     val o = "${origin.latitude},${origin.longitude}"
     val d = "${dest.latitude},${dest.longitude}"
-    RetrofitInstance.api.getDirections(origin = o, destination = d, mode = "walking", apiKey = "AIzaSyDj1CTmLJMsvCTRwwVJrCFHp6Cqt7wVKp8")
+    RetrofitInstance.api.getDirections(origin = o, destination = d, mode = "walking", apiKey = "AIzaSyBnubSqzigFbf-LKcti9iD5kG5MUMHHogc")
         .enqueue(object : Callback<com.example.project250311.Map.model.DirectionsResponse> {
             override fun onResponse(call: Call<com.example.project250311.Map.model.DirectionsResponse>, response: Response<com.example.project250311.Map.model.DirectionsResponse>) {
                 Log.d("MapDebug", "API 回應代碼: ${response.code()}") // [除錯]
