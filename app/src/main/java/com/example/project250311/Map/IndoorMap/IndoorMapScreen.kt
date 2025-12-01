@@ -518,13 +518,13 @@ fun IndoorMapScreen(
         }
 
         // 2) 依目的地前綴強制對應到固定入口：
-        //    sec* -> SEC 入口； seb* -> SEB 入口； 其他 -> SE(SEA) 入口
+        //    sec* -> SEC 入口； seb* -> SEB 入口； 其他 -> SEA 入口
         val prefixSource = (targetEntity.id.ifBlank { targetEntity.name }).lowercase()
         val letters = prefixSource.takeWhile { it.isLetter() }
         val mappedBuilding = when {
             letters.startsWith("sec") -> "SEC"
             letters.startsWith("seb") -> "SEB"
-            else -> "SE"
+            else -> "SEA"
         }
         val forced = all.firstOrNull { it.type.equals("ENTRANCE", true) && it.buildingId.equals(mappedBuilding, true) }
         if (forced != null) {
@@ -532,12 +532,14 @@ fun IndoorMapScreen(
             return forced
         }
 
-        // 3) 回退：同建築 -> 指定序列(SEB -> SE) -> 任一入口
+        // 3) 回退：同建築 -> 指定序列(SEB -> SEA -> SE) -> 任一入口
         val sameBld = all.firstOrNull { it.type.equals("ENTRANCE", true) && !targetEntity.buildingId.isNullOrBlank() && it.buildingId.equals(targetEntity.buildingId, true) }
         if (sameBld != null) return sameBld
 
         val seb = all.firstOrNull { it.type.equals("ENTRANCE", true) && it.buildingId.equals("SEB", true) }
         if (seb != null) return seb
+        val sea = all.firstOrNull { it.type.equals("ENTRANCE", true) && it.buildingId.equals("SEA", true) }
+        if (sea != null) return sea
         val se = all.firstOrNull { it.type.equals("ENTRANCE", true) && it.buildingId.equals("SE", true) }
         if (se != null) return se
 
@@ -790,28 +792,51 @@ fun IndoorMapScreen(
                             it.name.contains("elevator", ignoreCase = true)
                         }
 
-                        // Deterministic matching: always prefer elevator on entry preview
-                        val prefix = targetEntity.id.takeWhile { it.isLetter() }.lowercase()
-                        val entryFloorNumStr = if (entryEntity.imageId != 0) {
-                            try { context.resources.getResourceEntryName(entryEntity.imageId).takeLastWhile { it.isDigit() } } catch (_: Exception) { null }
-                        } else null
-                        val wantFrag = if (!prefix.isBlank() && !entryFloorNumStr.isNullOrBlank()) (prefix + entryFloorNumStr).lowercase() else null
-
-                        var targetVertical: ReferencePointEntity? = null
-                        // 1) elevator with matching building + fragment (e.g., sec1)
-                        if (wantFrag != null) targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(wantFrag) }
-                        // 2) any elevator matching prefix (sec/seb/sea)
-                        if (targetVertical == null && prefix.isNotBlank()) targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(prefix) }
-                        // 3) any elevator on this floor
-                        if (targetVertical == null) targetVertical = elevatorsOnFloor.firstOrNull()
-                        // 4) fallback to any vertical matching prefix
-                        if (targetVertical == null && prefix.isNotBlank()) targetVertical = verticalAll.firstOrNull { it.name.lowercase().contains(prefix) }
-                        // 5) last resort: any vertical
-                        if (targetVertical == null) targetVertical = verticalAll.firstOrNull()
-
-                        val sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
-                        val gPoint = targetVertical?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
-
+                        // 新邏輯：
+                        // 1F 且目標在 1F：入口 -> 教室
+                        // 1F 且目標不在 1F：入口 -> 1F 電梯 (sea1/seb1/sec1)
+                        val targetNameLower = targetEntity.name.trim().lowercase()
+                        val buildingPrefix = when {
+                            targetNameLower.startsWith("sea") -> "sea"
+                            targetNameLower.startsWith("seb") -> "seb"
+                            targetNameLower.startsWith("sec") -> "sec"
+                            else -> ""
+                        }
+                        val currentFloorId = entryEntity.floorId
+                        val isTargetOnCurrentFloor = currentFloorId == targetEntity.floorId
+                        var sPoint: Offset? = null
+                        var gPoint: Offset? = null
+                        if (currentFloorId == 1) {
+                            if (isTargetOnCurrentFloor) {
+                                // 入口 -> 教室
+                                sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
+                                gPoint = Offset((targetEntity.x.toFloat() / 100f) * bmp2.width, (targetEntity.y.toFloat() / 100f) * bmp2.height)
+                            } else {
+                                // 入口 -> 1F 電梯
+                                val wantElevatorName = if (buildingPrefix.isNotEmpty()) "${buildingPrefix}1" else ""
+                                var targetVertical: ReferencePointEntity? = null
+                                if (wantElevatorName.isNotEmpty()) {
+                                    targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("ELEVATOR", true) }
+                                }
+                                if (targetVertical == null && wantElevatorName.isNotEmpty()) {
+                                    targetVertical = verticalAll.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("STAIRS", true) }
+                                }
+                                sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
+                                gPoint = targetVertical?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
+                            }
+                        } else {
+                            // 備援：非 1F 入口 -> 1F 電梯
+                            val wantElevatorName = if (buildingPrefix.isNotEmpty()) "${buildingPrefix}1" else ""
+                            var targetVertical: ReferencePointEntity? = null
+                            if (wantElevatorName.isNotEmpty()) {
+                                targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("ELEVATOR", true) }
+                            }
+                            if (targetVertical == null && wantElevatorName.isNotEmpty()) {
+                                targetVertical = verticalAll.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("STAIRS", true) }
+                            }
+                            sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
+                            gPoint = targetVertical?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
+                        }
                         start = sPoint
                         goal = gPoint
                         // 預覽階段不自動顯示教室點（僅保留使用者手動切換）
@@ -898,23 +923,38 @@ fun IndoorMapScreen(
                                 it.name.contains("elevator", ignoreCase = true)
                             }
 
-                            // Elevator-first deterministic selection (same as earlier preview branch)
-                            val prefix = targetEntity.id.takeWhile { it.isLetter() }.lowercase()
-                            val entryFloorNumStr = if (entryEntity.imageId != 0) {
-                                try { context.resources.getResourceEntryName(entryEntity.imageId).takeLastWhile { it.isDigit() } } catch (_: Exception) { null }
-                            } else null
-                            val wantFrag = if (!prefix.isBlank() && !entryFloorNumStr.isNullOrBlank()) (prefix + entryFloorNumStr).lowercase() else null
-
-                            var targetVertical: ReferencePointEntity? = null
-                            if (wantFrag != null) targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(wantFrag) }
-                            if (targetVertical == null && prefix.isNotBlank()) targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(prefix) }
-                            if (targetVertical == null) targetVertical = elevatorsOnFloor.firstOrNull()
-                            if (targetVertical == null && prefix.isNotBlank()) targetVertical = verticalAll.firstOrNull { it.name.lowercase().contains(prefix) }
-                            if (targetVertical == null) targetVertical = verticalAll.firstOrNull()
-
-                            val sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
-                            val gPoint = targetVertical?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
-
+                            // 第二預覽分支統一邏輯
+                            val targetNameLower = targetEntity.name.trim().lowercase()
+                            val buildingPrefix = when {
+                                targetNameLower.startsWith("sea") -> "sea"
+                                targetNameLower.startsWith("seb") -> "seb"
+                                targetNameLower.startsWith("sec") -> "sec"
+                                else -> ""
+                            }
+                            val currentFloorId = entryEntity.floorId
+                            val isTargetOnCurrentFloor = currentFloorId == targetEntity.floorId
+                            var sPoint: Offset? = null
+                            var gPoint: Offset? = null
+                            if (currentFloorId == 1) {
+                                if (isTargetOnCurrentFloor) {
+                                    sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
+                                    gPoint = Offset((targetEntity.x.toFloat() / 100f) * bmp2.width, (targetEntity.y.toFloat() / 100f) * bmp2.height)
+                                } else {
+                                    val wantElevatorName = if (buildingPrefix.isNotEmpty()) "${buildingPrefix}1" else ""
+                                    var targetVertical: ReferencePointEntity? = null
+                                    if (wantElevatorName.isNotEmpty()) targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("ELEVATOR", true) }
+                                    if (targetVertical == null && wantElevatorName.isNotEmpty()) targetVertical = verticalAll.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("STAIRS", true) }
+                                    sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
+                                    gPoint = targetVertical?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
+                                }
+                            } else {
+                                val wantElevatorName = if (buildingPrefix.isNotEmpty()) "${buildingPrefix}1" else ""
+                                var targetVertical: ReferencePointEntity? = null
+                                if (wantElevatorName.isNotEmpty()) targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("ELEVATOR", true) }
+                                if (targetVertical == null && wantElevatorName.isNotEmpty()) targetVertical = verticalAll.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("STAIRS", true) }
+                                sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
+                                gPoint = targetVertical?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
+                            }
                             start = sPoint
                             goal = gPoint
                             // 預覽階段不自動顯示教室點（僅保留使用者手動切換）
@@ -1439,41 +1479,33 @@ fun IndoorMapScreen(
                                 }.distinctBy { it.id }
 
                                 // 簡化且固定邏輯：目標樓層一律優先使用電梯 (ELEVATOR)，再回退其他垂直點
-                                var matched: ReferencePointEntity? = null
-                                try {
-                                    val resName = try { context.resources.getResourceEntryName(target.imageId) } catch (_: Exception) { null }
-                                    val floorNumStr = resName?.takeLastWhile { it.isDigit() }
-                                    val prefix = (target.id.ifBlank { target.name }).takeWhile { it.isLetter() }.lowercase()
-                                    val preferredType = "ELEVATOR"
-
-                                    val wantFragment = if (!prefix.isBlank() && !floorNumStr.isNullOrBlank()) (prefix + floorNumStr).lowercase() else null
-                                    val floorVerticalAll = destCandidates
-                                    val elevatorsOnFloor = floorVerticalAll.filter {
-                                        it.type.equals("ELEVATOR", true) ||
-                                        it.name.contains("電梯", ignoreCase = true) ||
-                                        it.name.contains("elevator", ignoreCase = true)
-                                    }
-
-                                    // 1) 優先名稱包含 prefix+樓層數字 的電梯（例如 sea1 / seb1 / sec1）
-                                    if (wantFragment != null) matched = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(wantFragment) }
-                                    // 2) 名稱包含 prefix 的電梯
-                                    if (matched == null && prefix.isNotBlank()) matched = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(prefix) }
-                                    // 3) 任何電梯
-                                    if (matched == null) matched = elevatorsOnFloor.firstOrNull()
-                                    // 4) 名稱包含 prefix 的任一垂直點（電梯/樓梯）
-                                    if (matched == null && prefix.isNotBlank()) matched = floorVerticalAll.firstOrNull { it.name.lowercase().contains(prefix) }
-                                    // 5) 最後回退：任一垂直點
-                                    if (matched == null) matched = floorVerticalAll.firstOrNull()
-                                } catch (e: Exception) {
-                                    Log.d("IndoorMap.UI", "matching stairs failed: ${e.message}")
+                                // 目標樓層：電梯(或樓梯) -> 教室
+                                val targetNameLower = target.name.trim().lowercase()
+                                val buildingPrefix = when {
+                                    targetNameLower.startsWith("sea") -> "sea"
+                                    targetNameLower.startsWith("seb") -> "seb"
+                                    targetNameLower.startsWith("sec") -> "sec"
+                                    else -> ""
                                 }
-
-                                Log.d("IndoorMap.UI", "matched vertical=${matched?.id ?: "<null>"} name=${matched?.name ?: "-"} type=${matched?.type ?: "-"} destCandidates=${destCandidates.size}")
-
-                                // 如果 matched 不為 null，依新圖片大小計算 start 與 goal
-                                val startPt = matched?.let { Offset((it.x.toFloat() / 100f) * bmp.width, (it.y.toFloat() / 100f) * bmp.height) }
+                                // 取得樓層號（floorNumber）
+                                val targetFloorEntity = withContext(Dispatchers.IO) { db.floorDao().getFloorById(target.floorId) }
+                                val floorNumber = targetFloorEntity?.floorNumber ?: target.floorId
+                                val wantElevatorName = if (buildingPrefix.isNotEmpty()) "${buildingPrefix}${floorNumber}" else ""
+                                val floorVerticalAll = destCandidates
+                                val elevatorsOnFloor = floorVerticalAll.filter {
+                                    it.type.equals("ELEVATOR", true) ||
+                                    it.name.contains("電梯", ignoreCase = true) ||
+                                    it.name.contains("elevator", ignoreCase = true)
+                                }
+                                var startVertical: ReferencePointEntity? = null
+                                if (wantElevatorName.isNotEmpty()) {
+                                    startVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("ELEVATOR", true) }
+                                }
+                                if (startVertical == null && wantElevatorName.isNotEmpty()) {
+                                    startVertical = floorVerticalAll.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("STAIRS", true) }
+                                }
+                                val startPt = startVertical?.let { Offset((it.x.toFloat() / 100f) * bmp.width, (it.y.toFloat() / 100f) * bmp.height) }
                                 val goalPt = Offset((target.x.toFloat() / 100f) * bmp.width, (target.y.toFloat() / 100f) * bmp.height)
-
                                 start = startPt
                                 goal = goalPt
                                 previewEntryPhase = false

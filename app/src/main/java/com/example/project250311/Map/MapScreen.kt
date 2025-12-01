@@ -653,10 +653,11 @@ fun MapScreen(navController: NavHostController) {
                                                     // Derive desired building/prefix from destination NAME (id 可能是 UUID，不能用來判斷)
                                                     val raw = destRef.name.ifBlank { destRef.id }
                                                     val prefix = raw.takeWhile { it.isLetter() }.lowercase()
+                                                    // 與室內畫面規則一致：A 棟使用 SEA，B=SEB，C=SEC
                                                     val effectiveBuildingId = when (prefix) {
                                                         "seb" -> "SEB"
                                                         "sec" -> "SEC"
-                                                        else -> "SE"
+                                                        else -> "SEA"
                                                     }
                                                     val desiredEntranceName = when (prefix) {
                                                         "seb" -> "seb入口"
