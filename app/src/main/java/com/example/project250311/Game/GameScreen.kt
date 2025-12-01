@@ -109,16 +109,15 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     // (★) 定義集點資料 (建議之後可以移到 Repository 或從 JSON 讀取)
     private val _checkpoints = MutableStateFlow<List<CheckpointInfo>>(
         listOf(
-            CheckpointInfo("sec511", "SEC511 教室", "sec5", 28.41f, 59.07f, "NTTU_SEC_511", stampImageRes = R.drawable.sec5),
-//            CheckpointInfo("sec304", "SEC304 教室", "se3", 22.73f, 21.12f, "NTTU_SEC_304", stampImageRes = R.drawable.sec5),
-//            CheckpointInfo("test123", "測試點 (A棟入口)", "se1", 46.30f, 56.27f, "TEST_QR"),
+            CheckpointInfo("sec511", "SEC511", "sec5", 28.41f, 59.07f, "https://youtu.be/dQw4w9WgXcQ?si=8uheMBlcYW7DmOa-", stampImageRes = R.drawable.sec511),
+            CheckpointInfo("sec41", "SEC304 教室", "se3", 22.73f, 21.12f, "", stampImageRes = R.drawable.sec5),
+            CheckpointInfo("seb106", "SEB106", "se1", 66.1337f, 48.3315f, "", stampImageRes = R.drawable.seb106),
         )
     )
 
     private val _missions = MutableStateFlow(
         listOf(
             Mission("1", "查看今日課表", "確認今天的上課地點", Icons.Default.CalendarToday, "schedule"),
-//            Mission("2", "新增課程筆記", "為一門課程寫下筆記", Icons.Default.Edit, "note_edit"),
             Mission("2", "學餐轉盤", "不知道吃什麼？轉一下！", Icons.Default.Restaurant, "food"),
             Mission("3", "前往理工學院", "移動到指定地點並掃描", Icons.Default.Map, "map_game")
         )
@@ -219,11 +218,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
             // (★) 判定邏輯修正：使用百分比距離閾值 (例如 10%)
             // 假設地圖長寬 100單位，距離 10單位約為有效範圍
-            val isNearby = distance < 15.0f
+            val isSameMap = (currentMapGroup == checkpoint.targetMapGroup)
 
             val status = when {
                 progress.isCollected -> CheckpointStatus.COLLECTED
-                isNearby -> CheckpointStatus.IN_RANGE
+                isSameMap -> CheckpointStatus.IN_RANGE
                 else -> CheckpointStatus.TOO_FAR
             }
 
@@ -351,8 +350,19 @@ fun GameScreen(
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+                ),
+                actions = {
+                    IconButton(onClick = { navController.navigate("passport") }) {
+                        // 這裡可以用一個類似書本或列表的 icon
+                        Icon(
+                            imageVector = Icons.Default.MenuBook, // 或是 Icons.Default.GridView
+                            contentDescription = "View Passport",
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                }
             )
+
         }
     ) { paddingValues ->
         Column(

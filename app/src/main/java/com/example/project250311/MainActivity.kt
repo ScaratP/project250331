@@ -48,10 +48,13 @@ import com.example.project250311.Schedule.Notice.NotificationManagerScreen
 import com.example.project250311.ui.theme.Project250311Theme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import com.example.project250311.Map.IndoorMap.LocationViewModel
 // (★) 新增 Import
 import com.example.project250311.Game.QrcodeScreen
 import com.example.project250311.Game.CollectScreen
+import com.example.project250311.Game.PassportScreen
 
 class MainActivity : ComponentActivity() {
     private val courseViewModel: CourseViewModel by viewModels {
@@ -277,13 +280,34 @@ fun AppWithNavigation(
     val positioningViewModel: LocationViewModel = viewModel()
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text(currentTitle) }) },
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = currentTitle,
+                        style = MaterialTheme.typography.titleMedium, // 改用中標題字體
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp
+                    )
+                },
+                modifier = Modifier.height(56.dp),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                ),
+//                windowInsets = WindowInsets.statusBars.only(WindowInsetsSides.Horizontal)
+            )
+        },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                modifier = Modifier.height(65.dp),
+                containerColor = MaterialTheme.colorScheme.surface,
+                tonalElevation = 3.dp
+            ) {
                 mainCategories.forEach { category ->
                     NavigationBarItem(
-                        icon = { Icon(category.icon, contentDescription = category.title) },
-                        label = { Text(category.title) },
+                        icon = { Icon(category.icon, contentDescription = category.title, modifier = Modifier.size(22.dp)) },
+                        label = { Text(text = category.title, style = MaterialTheme.typography.labelSmall, maxLines = 1) },
                         selected = currentCategory?.id == category.id,
                         onClick = {
                             // 如果該分類只有一個子項目（例如遊戲模式的所有按鈕），就直接導航
@@ -300,7 +324,8 @@ fun AppWithNavigation(
                                 selectedCategory = category
                                 showSubMenu = true
                             }
-                        }
+                        },
+                        modifier = Modifier.padding(top = 4.dp)
                     )
                 }
             }
@@ -624,6 +649,17 @@ fun AppNavHost(
                             popUpTo(0) { inclusive = true }
                         }
                     }
+                }
+            )
+        }
+
+        composable("passport") {
+            PassportScreen(
+                viewModel = gameViewModel,
+                onBack = { navController.popBackStack() },
+                onStampClick = { checkpointId ->
+                    // 點擊已收集的印章，跳轉去 CollectScreen 查看 (review mode)
+                    navController.navigate("collect/$checkpointId")
                 }
             )
         }
