@@ -270,6 +270,9 @@ interface ReferencePointDao {
     @Query("SELECT * FROM reference_points WHERE imageId = :imageId AND type = 'CLASSROOM'")
     fun getClassroomPointsByImageId(imageId: Int): Flow<List<ReferencePointEntity>>
 
+    @Query("SELECT COUNT(*) FROM reference_points")
+    suspend fun countPoints(): Int
+
     @Query(
             "SELECT * FROM reference_points " +
                     "WHERE buildingId = :buildingId AND floorId = :floorId AND type = 'CLASSROOM'"
