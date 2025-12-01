@@ -1,6 +1,7 @@
 package com.example.project250311.Map.IndoorMap.Database
 
 import android.content.Context
+import android.util.Log
 import androidx.room.*
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -597,11 +598,15 @@ abstract class IndoorMapDatabase : RoomDatabase() {
                     mapOf(
                             // SE 1~3
                             "se1" to ("SE" to 1),
+                            "sea1" to ("SE" to 1),
                             "se2" to ("SE" to 2),
                             "se3" to ("SE" to 3),
                             // SE(A棟) 4~5
                             "sea4" to ("SE" to 4),
                             "sea5" to ("SE" to 5),
+                            // synonyms: sometimes converter emits sea1/seb1/sec1
+                            "seb1" to ("SEB" to 1),
+                            "sec1" to ("SEC" to 1),
                             // SEB(B棟) 4
                             "seb4" to ("SEB" to 4),
                             // SEC(C棟) 4~5
@@ -624,17 +629,18 @@ abstract class IndoorMapDatabase : RoomDatabase() {
                     val buildingFloor = allowedImageToBuildingFloor[imageName] ?: return@forEach
                     val (buildingId, floorNumber) = buildingFloor
 
-                    val imageId =
-                            context.resources.getIdentifier(
-                                    imageName,
-                                    "drawable",
-                                    context.packageName
-                            )
-                    if (imageId == 0) return@forEach
 
-                    val floorEntity =
-                            database.floorDao().getFloorByBuildingAndNumber(buildingId, floorNumber)
-                                    ?: return@forEach
+                    var imageId = context.resources.getIdentifier(imageName, "drawable", context.packageName)
+                    var floorEntity = database.floorDao().getFloorByBuildingAndNumber(buildingId, floorNumber)
+
+                    // If imageId not found but floor entity exists, use floor's imageId as fallback
+                    if (imageId == 0 && floorEntity != null) {
+                        imageId = floorEntity.imageId
+                    }
+
+                    // If floorEntity missing, try to look up (fallback will be handled below)
+                    if (floorEntity == null) floorEntity = database.floorDao().getFloorByBuildingAndNumber(buildingId, floorNumber)
+                    if (floorEntity == null) return@forEach
 
                     imported +=
                             ReferencePointEntity(
@@ -653,11 +659,15 @@ abstract class IndoorMapDatabase : RoomDatabase() {
             }
 
             if (imported.isNotEmpty()) {
-                database.referencePointDao().insertAllReferencePoints(imported)
+                                try {
+                                        Log.d("IndoorMap.DB", "importStairsPointsFromRaw: importing ${imported.size} reference points")
+                                } catch (_: Exception) {}
+                                database.referencePointDao().insertAllReferencePoints(imported)
             }
         }
 
-        // 由 res/raw/reference_points_stairs_output.txt 解析樓梯/電梯點並寫入 DB
+        // 由 res/raw/reference_points_stairs_output.txt 以及 res/raw/reference_entrance_points_output.txt 解析樓梯/電梯與出入口點並寫入 DB
+        // 兩種資料會一起處理，並以 image resource 對應到建築/樓層後寫入
         private suspend fun importStairsPointsFromRaw(
                 context: Context,
                 database: IndoorMapDatabase
@@ -668,54 +678,156 @@ abstract class IndoorMapDatabase : RoomDatabase() {
                             "se1" to ("SE" to 1),
                             "se2" to ("SE" to 2),
                             "se3" to ("SE" to 3),
+                            "sea1" to ("SE" to 1),
                             "sea4" to ("SE" to 4),
                             "sea5" to ("SE" to 5),
+                            "seb1" to ("SEB" to 1),
                             "seb4" to ("SEB" to 4),
+                            "sec1" to ("SEC" to 1),
                             "sec4" to ("SEC" to 4),
                             "sec5" to ("SEC" to 5)
                     )
 
+            // 支援的檔案清單（先處理 stairs 檔，再處理 entrance 檔）
+            val rawResList = listOf(R.raw.reference_points_stairs_output, R.raw.reference_entrance_points_output)
+
+            // Regex: 捕捉 id, name, x, y, drawableToken, scanCount, type
+            // 另外嘗試匹配可選的 building token 與 floor token（如出入口 raw 檔會帶 A/B/C 與 11/21/31）
             val pattern =
                     Regex(
-                            """ReferencePointEntity\("([^"]+)",\s*"([^"]+)",\s*([-0-9.]+),\s*([-0-9.]+),\s*R\.drawable\.([A-Za-z0-9_]+),\s*\d+,\s*"([A-Z_]+)""""
+                            """ReferencePointEntity\("([^"]+)",\s*"([^"]+)",\s*([-0-9.]+),\s*([-0-9.]+),\s*R\.drawable\.([A-Za-z0-9_]+),\s*\d+,\s*"([A-Z_]+)"(?:,\s*"?([A-Za-z0-9_]+)"?\s*,\s*([0-9]+))?"""
                     )
 
+            // mapping from short building token in raw file to actual building id
+            val buildingTokenToId = mapOf("A" to "SE", "B" to "SEB", "C" to "SEC")
+
             val imported = mutableListOf<ReferencePointEntity>()
-            val resId = R.raw.reference_points_stairs_output
-            context.resources.openRawResource(resId).bufferedReader().useLines { lines ->
-                lines.forEach { line ->
-                    val m = pattern.find(line) ?: return@forEach
-                    val (id, name, xStr, yStr, imageName, type) = m.destructured
-                    if (type != "STAIRS") return@forEach
 
-                    val buildingFloor = allowedImageToBuildingFloor[imageName] ?: return@forEach
-                    val (buildingId, floorNumber) = buildingFloor
+            for (resId in rawResList) {
+                try {
+                    context.resources.openRawResource(resId).bufferedReader().useLines { lines ->
+                                                lines.forEach { line ->
+                                                        val m = pattern.find(line) ?: return@forEach
+                                                        val (id, name, xStr, yStr, drawableToken, type, buildingTokenRaw, floorTokenRaw) = m.destructured
 
-                    val imageId =
-                            context.resources.getIdentifier(
-                                    imageName,
-                                    "drawable",
-                                    context.packageName
-                            )
-                    if (imageId == 0) return@forEach
+                                                        // 只處理特定類型
+                                                        if (!(type == "STAIRS" || type == "CLASSROOM" || type == "ENTRANCE" || type == "ELEVATOR")) {
+                                                                Log.d("IndoorMap.DB", "importStairsPointsFromRaw: skipping type=$type for id=$id")
+                                                                return@forEach
+                                                        }
 
-                    val floorEntity =
-                            database.floorDao().getFloorByBuildingAndNumber(buildingId, floorNumber)
-                                    ?: return@forEach
+                                                        // 嘗試解析 drawableToken 為數字或名稱
+                                                        val numeric = drawableToken.toIntOrNull()
+                                                        var imageId = numeric ?: context.resources.getIdentifier(drawableToken, "drawable", context.packageName)
 
-                    imported +=
-                            ReferencePointEntity(
-                                    id = id,
-                                    name = name,
-                                    x = xStr.toDoubleOrNull() ?: return@forEach,
-                                    y = yStr.toDoubleOrNull() ?: return@forEach,
-                                    imageId = imageId,
-                                    scanCount = 0,
-                                    type = "STAIRS",
-                                    buildingId = buildingId,
-                                    floorId = floorEntity.id,
-                                    isUserDefined = false
-                            )
+                                                        var imageNameResolved = try {
+                                                                if (imageId != 0) context.resources.getResourceEntryName(imageId) else drawableToken
+                                                        } catch (_: Exception) {
+                                                                drawableToken
+                                                        }
+
+                                                        // 先嘗試用 imageNameResolved 對應 mapping
+                                                        var buildingFloor = allowedImageToBuildingFloor[imageNameResolved]
+
+                                                        // 若 mapping 不存在，嘗試使用 raw 行內的 building/floor token
+                                                        var derivedBuildingId: String? = null
+                                                        var derivedFloorNumber: Int? = null
+                                                        if (buildingFloor == null) {
+                                                                val bTok = buildingTokenRaw.ifBlank { null }
+                                                                val fTok = floorTokenRaw.ifBlank { null }
+                                                                if (bTok != null) {
+                                                                        derivedBuildingId = buildingTokenToId[bTok] ?: bTok
+                                                                }
+                                                                if (fTok != null) {
+                                                                        val parsed = fTok.toIntOrNull()
+                                                                        if (parsed != null) {
+                                                                                // 規一化：11/21/31 -> 1，使用 %10 作簡單規則
+                                                                                derivedFloorNumber = if (parsed >= 10) parsed % 10 else parsed
+                                                                        }
+                                                                }
+                                                                if (derivedBuildingId != null && derivedFloorNumber != null) {
+                                                                        buildingFloor = derivedBuildingId to derivedFloorNumber
+                                                                }
+                                                        }
+
+                                                        // 若 imageId 為 0，嘗試用 imageNameResolved 重新取得
+                                                        if (imageId == 0) {
+                                                                imageId = context.resources.getIdentifier(imageNameResolved, "drawable", context.packageName)
+                                                        }
+
+                                                        // 若仍無 mapping，可記錄並跳過
+                                                        if (buildingFloor == null) {
+                                                                Log.d(
+                                                                                "IndoorMap.DB",
+                                                                                "importStairsPointsFromRaw: no mapping for line id=$id name=$name drawable=$drawableToken resolvedName=$imageNameResolved buildingTok=$buildingTokenRaw floorTok=$floorTokenRaw - skipping"
+                                                                )
+                                                                return@forEach
+                                                        }
+
+                                                        val (buildingId, floorNumber) = buildingFloor
+
+                                                        var floorEntity = database.floorDao().getFloorByBuildingAndNumber(buildingId, floorNumber)
+                                                        if (floorEntity == null) {
+                                                                // 嘗試使用該建築的 entranceFloorId 作為 fallback
+                                                                try {
+                                                                        val buildingEntity = database.buildingDao().getBuildingById(buildingId)
+                                                                        if (buildingEntity != null) {
+                                                                                val fallbackFloor = buildingEntity.entranceFloorId
+                                                                                floorEntity = database.floorDao().getFloorByBuildingAndNumber(buildingId, fallbackFloor)
+                                                                                if (floorEntity != null) {
+                                                                                        Log.d("IndoorMap.DB", "importStairsPointsFromRaw: using building.entranceFloorId=$fallbackFloor for building=$buildingId (line id=$id)")
+                                                                                }
+                                                                        }
+                                                                } catch (_: Exception) {
+                                                                }
+                                                        }
+                                                        if (floorEntity == null) {
+                                                                Log.d("IndoorMap.DB", "importStairsPointsFromRaw: no floor entity for building=$buildingId floorNumber=$floorNumber (line id=$id) - skipping")
+                                                                return@forEach
+                                                        }
+
+                                                        val x = xStr.toDoubleOrNull()
+                                                        val y = yStr.toDoubleOrNull()
+                                                        if (x == null || y == null) {
+                                                                Log.d("IndoorMap.DB", "importStairsPointsFromRaw: invalid coords for id=$id x=$xStr y=$yStr - skipping")
+                                                                return@forEach
+                                                        }
+
+                                                        // 若 imageId 為 0，改用該樓層的 imageId 作為 fallback（避免後續 UI 取名失敗）
+                                                        if (imageId == 0) {
+                                                                try {
+                                                                        imageId = floorEntity.imageId
+                                                                        imageNameResolved = if (imageId != 0) context.resources.getResourceEntryName(imageId) else imageNameResolved
+                                                                } catch (_: Exception) {
+                                                                }
+                                                        }
+
+                                                        // log successful parse for this line
+                                                        Log.d(
+                                                                        "IndoorMap.DB",
+                                                                        "importStairsPointsFromRaw: parsed id=$id name=$name drawable=$drawableToken resolvedName=$imageNameResolved imageId=$imageId type=$type building=$buildingId floorNumber=$floorNumber floorEntityId=${floorEntity.id}"
+                                                        )
+
+                                                        imported += ReferencePointEntity(
+                                                                        id = id,
+                                                                        name = name,
+                                                                        x = x,
+                                                                        y = y,
+                                                                        imageId = imageId,
+                                                                        scanCount = 0,
+                                                                        type = type,
+                                                                        buildingId = buildingId,
+                                                                        floorId = floorEntity.id,
+                                                                        isUserDefined = false
+                                                        )
+                                                }
+                    }
+                } catch (ex: Exception) {
+                    // 若某個 raw resource 不存在或解析失敗，紀錄 log 並繼續處理其他檔案
+                    try {
+                        Log.d("IndoorMap.DB", "importStairsPointsFromRaw: failed to read resId=$resId -> ${ex.message}")
+                    } catch (_: Exception) {
+                    }
                 }
             }
 

@@ -6,6 +6,7 @@ import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.TransformableState
@@ -442,6 +443,9 @@ fun IndoorMapScreen(
     var showClassrooms by remember { mutableStateOf(false) }
     var classroomPoints by remember { mutableStateOf<List<ReferencePointEntity>>(emptyList()) }
 
+    // Debug: currently resolved entry info (id/name/building/floor) for on-screen verification
+    var resolvedEntranceInfo by remember { mutableStateOf<String?>(null) }
+
     // 新增：工具函式（先前使用但未宣告，導致型別推論錯誤）
     fun screenToImage(p: Offset): Offset? {
         val bmp = imageBitmap ?: return null
@@ -456,6 +460,65 @@ fun IndoorMapScreen(
         return gx to gy
     }
 
+    // Helper: resolve preferred ENTRANCE reference point
+    fun resolvePreferredEntrance(
+        all: List<ReferencePointEntity>,
+        targetEntity: ReferencePointEntity,
+        entryPointId: String?
+    ): ReferencePointEntity? {
+        // 1) If explicit entryPointId provided, prefer that
+        if (!entryPointId.isNullOrBlank()) {
+            val byId = all.firstOrNull { it.id == entryPointId }
+            if (byId != null) {
+                val imageNameSafe = if (byId.imageId != 0) {
+                    try { context.resources.getResourceEntryName(byId.imageId) } catch (_: Exception) { "?" }
+                } else "?"
+                Log.d("IndoorMap.UI", "resolvePreferredEntrance: chosen by id=${byId.id} name=${byId.name} image=$imageNameSafe floorId=${byId.floorId}")
+                return byId
+            }
+        }
+
+        // 2) Prefer an ENTRANCE in the same building as the target.
+        //    If the DB buildingId looks wrong, derive candidates from the target id/name (e.g. "sec102" -> "SEC").
+        val candidateBuildings = mutableListOf<String>()
+        try {
+            if (!targetEntity.buildingId.isNullOrBlank()) candidateBuildings.add(targetEntity.buildingId.uppercase())
+            // derive from id/name prefix
+            val prefixSource = (targetEntity.id.ifBlank { targetEntity.name }).lowercase()
+            val prefix = prefixSource.takeWhile { it.isLetter() }
+            when (prefix) {
+                "sea", "se" -> if (!candidateBuildings.contains("SE")) candidateBuildings.add("SE")
+                "seb" -> if (!candidateBuildings.contains("SEB")) candidateBuildings.add("SEB")
+                "sec" -> if (!candidateBuildings.contains("SEC")) candidateBuildings.add("SEC")
+            }
+        } catch (_: Exception) { }
+
+        // search entrances by candidateBuildings in order
+        for (b in candidateBuildings) {
+            val found = all.firstOrNull { it.type.equals("ENTRANCE", true) && it.buildingId.equals(b, true) }
+            if (found != null) {
+                Log.d("IndoorMap.UI", "resolvePreferredEntrance: chosen by building-candidate=$b id=${found.id}")
+                return found
+            }
+        }
+
+        // 3) fallback chain: prefer SEB -> SE -> any ENTRANCE
+        val seb = all.firstOrNull { it.type.equals("ENTRANCE", true) && it.buildingId.equals("SEB", true) }
+        if (seb != null) {
+            Log.d("IndoorMap.UI", "resolvePreferredEntrance: fallback to SEB entrance=${seb.id}")
+            return seb
+        }
+        val se = all.firstOrNull { it.type.equals("ENTRANCE", true) && it.buildingId.equals("SE", true) }
+        if (se != null) {
+            Log.d("IndoorMap.UI", "resolvePreferredEntrance: fallback to SE entrance=${se.id}")
+            return se
+        }
+
+        val any = all.firstOrNull { it.type.equals("ENTRANCE", true) }
+        if (any != null) Log.d("IndoorMap.UI", "resolvePreferredEntrance: fallback to any entrance=${any.id}")
+        return any
+    }
+
     // Preview state: when entryPointId is on a different floor than target, we first show entry floor preview
     var previewEntryPhase by remember { mutableStateOf(false) }
     var previewEntryEntity by remember { mutableStateOf<ReferencePointEntity?>(null) }
@@ -468,9 +531,65 @@ fun IndoorMapScreen(
             // Collect the full reference-points flow and filter locally so we show both CLASSROOM and STAIRS
             // This avoids adding a separate DAO method for STAIRS while keeping the UI reactive to DB changes.
             refDao.getAllReferencePoints().collect { all ->
-                classroomPoints = all.filter { rp ->
+                // 先過濾資料庫中的參考點
+                val dbPoints = all.filter { rp ->
                     rp.imageId == currentImageRes && (rp.type.equals("CLASSROOM", true) || rp.type.equals("STAIRS", true))
                 }
+
+                // 再嘗試從 raw 資源檔載入 entrance points（如果存在）並合併
+                val entrancePoints = try {
+                    val rawId = context.resources.getIdentifier("reference_entrance_points_output", "raw", context.packageName)
+                    if (rawId != 0) {
+                        val txt = context.resources.openRawResource(rawId).bufferedReader().use { it.readText() }
+                        // 解析檔案中的 ReferencePointEntity(...) 行
+                        val regex = Regex("ReferencePointEntity\\(\"([^\"]+)\",\\s*\"([^\"]*)\",\\s*([0-9eE.+-]+),\\s*([0-9eE.+-]+),\\s*R\\.drawable\\.([^,\\)\\s]+),\\s*([0-9]+),\\s*\"([^\"]*)\",\\s*\"([^\"]*)\",\\s*([0-9]+)\\)")
+                        val out = mutableListOf<ReferencePointEntity>()
+                        val currentResName = if (currentImageRes != null && currentImageRes != 0) {
+                            try { context.resources.getResourceEntryName(currentImageRes) } catch (_: Exception) { null }
+                        } else null
+                        for (m in regex.findAll(txt)) {
+                            try {
+                                val id = m.groups[1]?.value ?: continue
+                                val name = m.groups[2]?.value ?: ""
+                                val x = m.groups[3]?.value?.toDoubleOrNull() ?: 0.0
+                                val y = m.groups[4]?.value?.toDoubleOrNull() ?: 0.0
+                                val drawableToken = m.groups[5]?.value ?: ""
+                                val scan = m.groups[6]?.value?.toIntOrNull() ?: 0
+                                val type = m.groups[7]?.value ?: "CLASSROOM"
+                                val buildingId = m.groups[8]?.value ?: "A"
+                                val floorId = m.groups[9]?.value?.toIntOrNull() ?: 0
+
+                                // 解析 token：可能為數字 resource id 或 drawable 名稱
+                                val numeric = drawableToken.toIntOrNull()
+                                var imageId = numeric ?: context.resources.getIdentifier(drawableToken, "drawable", context.packageName)
+
+                                // 嘗試解析 token 對應的 resource entry name（若 numeric 提供），否則使用 token
+                                val tokenResName = try {
+                                    if (numeric != null && numeric != 0) try { context.resources.getResourceEntryName(numeric) } catch (_: Exception) { drawableToken } else drawableToken
+                                } catch (_: Exception) {
+                                    drawableToken
+                                }
+
+                                // 若 entry name 與目前圖片相同，視為配對（不同 build 的 numeric id 也能對上）
+                                val matches = (imageId != 0 && imageId == currentImageRes) || (currentResName != null && tokenResName.equals(currentResName, true))
+                                if (matches) {
+                                    val finalImageId = if (imageId == currentImageRes) imageId else currentImageRes
+                                    out.add(ReferencePointEntity(id, name, x, y, finalImageId, scan, type, buildingId, floorId))
+                                } else {
+                                    Log.d("IndoorMap.UI", "entrance point ignored: token=$drawableToken parsedId=$imageId currentRes=$currentImageRes resName=$currentResName tokenResName=$tokenResName")
+                                }
+                            } catch (_: Exception) {
+                            }
+                        }
+                        out
+                    } else emptyList()
+                } catch (e: Exception) {
+                    emptyList()
+                }
+
+                // 合併 DB 點與 raw 檔中的 entrance 點，去重 (以 id 為唯一鍵)
+                val merged = (dbPoints + entrancePoints).distinctBy { it.id }
+                classroomPoints = merged
                 // Debug: log count and sample of returned points so we can confirm STAIRS are present
                 try {
                     Log.d(
@@ -492,18 +611,79 @@ fun IndoorMapScreen(
         val ePt = goal ?: return
         val (sx, sy) = imageToGrid(sPt, g, gridSample)
         val (gx, gy) = imageToGrid(ePt, g, gridSample)
+        // helper: find nearest walkable cell (breadth by radius) - returns Pair<x,y> or null
+        fun findNearestWalkable(g: Grid, cx: Int, cy: Int, maxRadius: Int = 30): Pair<Int, Int>? {
+            if (g.walkable(cx, cy)) return cx to cy
+            val w = g.w
+            val h = g.h
+            for (r in 1..maxRadius) {
+                val xmin = (cx - r).coerceAtLeast(0)
+                val xmax = (cx + r).coerceAtMost(w - 1)
+                val ymin = (cy - r).coerceAtLeast(0)
+                val ymax = (cy + r).coerceAtMost(h - 1)
+                // iterate ring
+                for (x in xmin..xmax) {
+                    if (g.walkable(x, ymin)) return x to ymin
+                    if (g.walkable(x, ymax)) return x to ymax
+                }
+                for (y in (ymin + 1) until (ymax)) {
+                    if (g.walkable(xmin, y)) return xmin to y
+                    if (g.walkable(xmax, y)) return xmax to y
+                }
+            }
+            return null
+        }
 
         scope.launch(Dispatchers.Default) {
-            val raw = aStar(g, sx, sy, gx, gy)
+            // Log initial mapping
+            Log.d("IndoorMap.UI", "recomputePathAsync: image->grid start=($sx,$sy) goal=($gx,$gy) grid=${g.w}x${g.h} sample=$gridSample")
+
+            // If start/goal are not walkable, attempt to find nearest walkable cell and update start/goal
+            val startWalk = g.walkable(sx, sy)
+            val goalWalk = g.walkable(gx, gy)
+            var sx2 = sx
+            var sy2 = sy
+            var gx2 = gx
+            var gy2 = gy
+
+            if (!startWalk) {
+                val found = findNearestWalkable(g, sx, sy, maxRadius = 40)
+                if (found != null) {
+                    sx2 = found.first
+                    sy2 = found.second
+                    Log.d("IndoorMap.UI", "start not walkable at ($sx,$sy) -> nearest walkable=($sx2,$sy2)")
+                    // update start Offset on main so UI shows corrected point
+                    withContext(Dispatchers.Main) {
+                        start = Offset((sx2 + 0.5f) * gridSample, (sy2 + 0.5f) * gridSample)
+                    }
+                } else {
+                    Log.d("IndoorMap.UI", "start not walkable and no nearby walkable cell found (maxRadius)")
+                }
+            }
+
+            if (!goalWalk) {
+                val found = findNearestWalkable(g, gx, gy, maxRadius = 40)
+                if (found != null) {
+                    gx2 = found.first
+                    gy2 = found.second
+                    Log.d("IndoorMap.UI", "goal not walkable at ($gx,$gy) -> nearest walkable=($gx2,$gy2)")
+                    withContext(Dispatchers.Main) {
+                        goal = Offset((gx2 + 0.5f) * gridSample, (gy2 + 0.5f) * gridSample)
+                    }
+                } else {
+                    Log.d("IndoorMap.UI", "goal not walkable and no nearby walkable cell found (maxRadius)")
+                }
+            }
+
+            // Recompute with possibly adjusted coords
+            val raw = aStar(g, sx2, sy2, gx2, gy2)
             if (raw.isEmpty()) {
+                Log.d("IndoorMap.UI", "aStar returned empty route from ($sx2,$sy2) to ($gx2,$gy2) -- walkable start=$startWalk goal=$goalWalk")
                 withContext(Dispatchers.Main) { path = emptyList() }
                 return@launch
             }
             val vis = smoothByVisibility(raw, g)
-            val px =
-                    vis.map { node ->
-                        Offset((node.x + 0.5f) * gridSample, (node.y + 0.5f) * gridSample)
-                    }
+            val px = vis.map { node -> Offset((node.x + 0.5f) * gridSample, (node.y + 0.5f) * gridSample) }
             val simplified = rdp(px, eps = (gridSample * 0.75f))
             withContext(Dispatchers.Main) { path = simplified }
         }
@@ -521,20 +701,22 @@ fun IndoorMapScreen(
             val targetEntity = all.firstOrNull { it.id == targetPointId }
             if (targetEntity != null) {
                 try {
-                    val tResName = try { context.resources.getResourceEntryName(targetEntity.imageId) } catch (_: Exception) { "?" }
+                    val tResName = if (targetEntity.imageId != 0) {
+                        try { context.resources.getResourceEntryName(targetEntity.imageId) } catch (_: Exception) { "?" }
+                    } else "?"
                     Log.d("IndoorMap.UI", "LaunchedEffect target=${targetEntity.id} floorId=${targetEntity.floorId} image=$tResName")
                 } catch (_: Exception) {}
                 // 不要一開始就自動跳到目標樓層圖片（會導致先顯示目標再跳回入口），
                 // 改為在下面分支中依情況載入對應圖片：若需要 preview 則載入 entry 的圖片，否則載入 target 的圖片。
                 // 接著在各自分支等待 imageBitmap 再做後續計算。
 
-                // 找入口：優先使用 entryPointId，否則尋找 building+floor 的 ENTRANCE
-                val entryEntity = if (!entryPointId.isNullOrBlank()) all.firstOrNull { it.id == entryPointId } else {
-                    all.firstOrNull { it.buildingId == targetEntity.buildingId && it.floorId == targetEntity.floorId && it.type.equals("ENTRANCE", true) }
-                }
+                // 找入口：使用共用 helper（會依 entryPointId、同棟 ENTRANCE、SEB、SE、任何 ENTRANCE 依序嘗試）
+                val entryEntity = resolvePreferredEntrance(all, targetEntity, entryPointId)
+                resolvedEntranceInfo = entryEntity?.let { try { "${it.id}/${it.name}/${it.buildingId}/${it.floorId}" } catch (_: Exception) { it.id } }
 
-                // 如果 entryEntity 存在且和目標不在同一樓層，我們進入 entry-preview 流程
-                if (entryEntity != null && entryEntity.floorId != targetEntity.floorId) {
+                // 如果 entryEntity 存在且和目標不在同一樓層，預設進入 entry-preview；
+                // 但若目標在 1F（floorId==1），就直接以 1F 圖導引，略過 preview。
+                if (entryEntity != null && entryEntity.floorId != targetEntity.floorId && targetEntity.floorId != 1) {
                     // set preview vars
                     previewEntryPhase = true
                     previewEntryEntity = entryEntity
@@ -571,7 +753,9 @@ fun IndoorMapScreen(
                             "sec" -> "STAIRS"
                             else -> null
                         }
-                        val entryFloorNumStr = try { context.resources.getResourceEntryName(entryEntity.imageId).takeLastWhile { it.isDigit() } } catch (_: Exception) { null }
+                        val entryFloorNumStr = if (entryEntity.imageId != 0) {
+                            try { context.resources.getResourceEntryName(entryEntity.imageId).takeLastWhile { it.isDigit() } } catch (_: Exception) { null }
+                        } else null
                         val wantFrag = if (!prefix.isBlank() && !entryFloorNumStr.isNullOrBlank()) (prefix + entryFloorNumStr).lowercase() else null
 
                         var targetVertical: ReferencePointEntity? = null
@@ -605,22 +789,22 @@ fun IndoorMapScreen(
 
                 val bmp = imageBitmap?.asAndroidBitmap()
                 if (bmp != null) {
-                    // 找入口：優先使用 entryPointId，否則尋找 building+floor 的 ENTRANCE
-                    val entryEntity = if (!entryPointId.isNullOrBlank()) all.firstOrNull { it.id == entryPointId } else {
-                        all.firstOrNull { it.buildingId == targetEntity.buildingId && it.floorId == targetEntity.floorId && it.type.equals("ENTRANCE", true) }
-                    }
+                    // 找入口：使用共用 helper（會依 entryPointId、同棟 ENTRANCE、SEB、SE、任何 ENTRANCE 依序嘗試）
+                    val entryEntity = resolvePreferredEntrance(all, targetEntity, entryPointId)
+                    resolvedEntranceInfo = entryEntity?.let { try { "${it.id}/${it.name}/${it.buildingId}/${it.floorId}" } catch (_: Exception) { it.id } }
                     try {
                         if (entryEntity != null) {
-                            val eRes = try { context.resources.getResourceEntryName(entryEntity.imageId) } catch (_: Exception) { "?" }
+                            val eRes = if (entryEntity.imageId != 0) {
+                                try { context.resources.getResourceEntryName(entryEntity.imageId) } catch (_: Exception) { "?" }
+                            } else "?"
                             Log.d("IndoorMap.UI", "Resolved entryEntity=${entryEntity.id} floorId=${entryEntity.floorId} image=$eRes name=${entryEntity.name}")
                         } else {
                             Log.d("IndoorMap.UI", "No entryEntity resolved for entryPointId=$entryPointId; falling back to ENTRANCE lookup")
                         }
                     } catch (_: Exception) {}
 
-                    // 如果 entryEntity 存在且和目標不在同一樓層，我們進入 "entry preview" 階段：先顯示 entry 的樓層（例如 1F），
-                    // 並計算入口(ENTRANCE) -> 該樓層的樓梯/電梯 的路徑。按下底部按鈕後會切換到目標樓層，並從該樓層的相對樓梯/電梯導航到教室。
-                    if (entryEntity != null && entryEntity.floorId != targetEntity.floorId) {
+                    // 若 entry 與目標不同樓層，預設進入 preview；但 1F 目標時略過 preview，直接在目標樓層導航。
+                    if (entryEntity != null && entryEntity.floorId != targetEntity.floorId && targetEntity.floorId != 1) {
                         // set preview vars
                         previewEntryPhase = true
                         previewEntryEntity = entryEntity
@@ -709,8 +893,10 @@ fun IndoorMapScreen(
     }
 
     // ===== 快速診斷：掃描所有 floorPlans，計算以目前閾值判定下的可走格百分比（離線/背景執行） =====
+    // 減少冗長診斷日誌以避免噪音
+    val ENABLE_DIAG_LOGS = false
     LaunchedEffect(gridSample) {
-        // use same strict parameters as current pipeline so we can compare
+        if (!ENABLE_DIAG_LOGS) return@LaunchedEffect
         scope.launch(Dispatchers.Default) {
             val sb = StringBuilder()
             try {
@@ -732,9 +918,7 @@ fun IndoorMapScreen(
             } catch (e: Exception) {
                 sb.append("diagnostic error: ${e.message}")
             }
-            withContext(Dispatchers.Main) {
-                floorStatsReport = sb.toString()
-            }
+            withContext(Dispatchers.Main) { floorStatsReport = sb.toString() }
         }
     }
 
@@ -1048,8 +1232,16 @@ fun IndoorMapScreen(
                                 val imgX = (rp.x.toFloat() / 100f) * bmp.width
                                 val imgY = (rp.y.toFloat() / 100f) * bmp.height
                                 val scr = imgToScreen(Offset(imgX, imgY))
+
+                                // 判斷是否為出入口：型別為 ENTRANCE 或 名稱包含「入口」
+                                val isEntrance = try {
+                                    rp.type.equals("ENTRANCE", true) || rp.name.contains("入口")
+                                } catch (_: Exception) { false }
+
+                                val pointColor = if (isEntrance) ComposeColor.Blue else colorMaterial.primary.copy(alpha = 0.9f)
+
                                 drawCircle(
-                                        color = colorMaterial.primary.copy(alpha = 0.9f),
+                                        color = pointColor,
                                         radius = classroomRadius,
                                         center = scr
                                 )
@@ -1084,6 +1276,18 @@ fun IndoorMapScreen(
                     contentDescription = "返回地圖",
                     tint = MaterialTheme.colorScheme.onPrimary
                 )
+            }
+
+            // 顯示目前解析到的入口資訊（除錯用）
+            resolvedEntranceInfo?.let { info ->
+                Box(modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp)
+                    .zIndex(4f)) {
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))) {
+                        Text(text = "入口: $info", modifier = Modifier.padding(8.dp), style = MaterialTheme.typography.labelSmall)
+                    }
+                }
             }
 
                 // 若處於 entry preview 階段，顯示底部按鈕讓使用者表示「已到達指定樓層」，按下後切換到目標樓層並計算從該樓層垂直點到教室的路徑
