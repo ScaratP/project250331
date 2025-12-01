@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "280297405156",
+    "project_id": "pamutt-32d33",
+    "storage_bucket": "pamutt-32d33.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:280297405156:android:51a1ada8c9b90366fa8af1",
+        "android_client_info": {
+          "package_name": "com.example.project250311"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBgGchON4mIMNFxsmTB0k1aPGa363gFF54"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

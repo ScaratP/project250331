@@ -274,8 +274,8 @@ private fun ByteArray.toBooleanArray(totalBits: Int): BooleanArray {
 suspend fun buildGridOverlayBitmap(g: Grid): ImageBitmap =
         withContext(Dispatchers.Default) {
             val bmp = Bitmap.createBitmap(g.w, g.h, Bitmap.Config.ARGB_8888)
-            val blocked = android.graphics.Color.argb(20, 0, 0, 0) // 淡灰（不可走）
-            val walkable = android.graphics.Color.argb(110, 0, 180, 255) // 半透明藍綠（可走）
+            val blocked = Color.argb(20, 0, 0, 0) // 淡灰（不可走）
+            val walkable = Color.argb(110, 0, 180, 255) // 半透明藍綠（可走）
             var idx = 0
             for (y in 0 until g.h) {
                 for (x in 0 until g.w) {

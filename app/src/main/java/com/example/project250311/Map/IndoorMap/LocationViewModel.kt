@@ -61,10 +61,10 @@ data class NormalizationParams(
 fun loadNormalizationParams(context: Context): NormalizationParams? {
     return try {
         NormalizationParams(
-            lo_mean = 121.06611382112112,
-            lo_std = 0.000233080383733365,
-            la_mean = 22.738333936106272,
-            la_std = 0.0003495636185198482
+            lo_mean = 121.06615002236796,
+            lo_std = 0.0002641819191750892,
+            la_mean = 22.738322384305718,
+            la_std = 0.0003638876383337944
         ).also {
             Log.d("IndoorMapScreen", "成功載入經緯度標準化設定 (normalization_params.json)")
         }
@@ -101,37 +101,40 @@ fun loadTransformationMatrices(context: Context): Map<String, MatrixData> {
         val matricesRoot = root.getJSONObject("matrices")
         val originsRoot = root.getJSONObject("origins")
 
+        // Map 的 Key 是 GroupName (String)
         val matrixMap = mutableMapOf<String, MatrixData>()
 
-        // 遍歷 JSON 中所有的 Key (例如 "sea1", "sec5"...)
-        val keys = matricesRoot.keys()
-        while (keys.hasNext()) {
-            val key = keys.next()
+        jsonKeyToGroupNameMap.forEach { (resIdString, groupName) ->
+            // (e.g., resIdString = "2131165302", groupName = "sec5")
 
-            if (matricesRoot.has(key) && originsRoot.has(key)) {
+            if (matricesRoot.has(resIdString) && originsRoot.has(resIdString)) {
                 // 解析 Matrix
-                val matrixJson = matricesRoot.getJSONArray(key)
+                val matrixJson = matricesRoot.getJSONArray(resIdString)
                 val matrix = List(matrixJson.length()) { i ->
                     val row = matrixJson.getJSONArray(i)
                     List(row.length()) { j -> row.getDouble(j) }
                 }
 
                 // 解析 Origin
-                val originJson = originsRoot.getJSONArray(key)
+                val originJson = originsRoot.getJSONArray(resIdString)
                 val origin = List(originJson.length()) { i -> originJson.getDouble(i) }
 
-                // 直接使用 JSON 的 Key (例如 "sea1") 存入
-                matrixMap[key] = MatrixData(matrix, origin)
+                // 使用 groupName (e.g., "sec5") 作為 Map 的 Key
+                matrixMap[groupName] = MatrixData(matrix, origin)
+
+            } else {
+                Log.w("loadMatrices", "JSON 鍵 $resIdString 在 'matrices' 或 'origins' 中找不到，跳過 $groupName")
             }
         }
 
-        Log.d("IndoorMapScreen", "成功載入 ${matrixMap.size} 個轉換矩陣")
+        Log.d("IndoorMapScreen", "成功載入 ${matrixMap.size} 個轉換矩陣 (並以 GroupName 重新索引)")
         matrixMap
     } catch (e: Exception) {
         Log.e("IndoorMapScreen", "載入 'transformation_data.json' 失敗!", e)
         emptyMap()
     }
 }
+
 
 class Hadnn2Model(private val context: Context) {
 
@@ -479,18 +482,14 @@ class LocationViewModel(application: Application) : AndroidViewModel(application
                 if (prediction != null) {
                     val (scaled_lon, scaled_lat, b_idx, f_idx) = prediction
 
-                    val mapGroupName = getGroupName(b_idx, f_idx)
-
-                    val buildingName = buildingIndexMap[b_idx] ?: "sea"
-                    val floorNum = floorIndexMap[f_idx] ?: 1
-                    val matrixKey = "$buildingName$floorNum"
+                    val newGroupName = getGroupName(b_idx, f_idx)
 
                     // Z-Score -> 經緯度
                     val normParams = normalizationParams!!
                     val lon = (scaled_lon * normParams.lo_std + normParams.lo_mean)
                     val lat = (scaled_lat * normParams.la_std + normParams.la_mean)
 
-                    val transformData = matricesConfig[matrixKey]
+                    val transformData = matricesConfig[newGroupName]
 
                     if (transformData != null) {
                         try {
@@ -500,7 +499,7 @@ class LocationViewModel(application: Application) : AndroidViewModel(application
                             val c = M[1][0]; val d = M[1][1]; val ty = M[1][2]
                             val det = (a * d) - (b * c)
 
-                            if (Math.abs(det) < 1e-25) {
+                            if (Math.abs(det) < 1e-15) {
                                 throw Exception("矩陣無法反解 (det=0)")
                             }
 
@@ -515,20 +514,21 @@ class LocationViewModel(application: Application) : AndroidViewModel(application
                                     latitude = lat
                                     longitude = lon
                                 },
-                                mapGroupName = mapGroupName,
+                                mapGroupName = newGroupName,
                                 mapPercentage = PointF(percent_x, percent_y),
                                 error = null // 成功，清除錯誤
                             )
+
                         } catch (e: Exception) {
                             // 計算百分比時出錯
                             _positionState.value = _positionState.value.copy(
-                                error = "計算 $matrixKey 百分比時出錯: ${e.message}"
+                                error = "計算 $newGroupName 百分比時出錯: ${e.message}"
                             )
                         }
                     } else {
                         // 找不到轉換矩陣
                         _positionState.value = _positionState.value.copy(
-                            error = "在 matricesConfig 中找不到 '$matrixKey' 的轉換矩陣"
+                            error = "在 matricesConfig 中找不到 '$newGroupName' 的轉換矩陣"
                         )
                     }
                 } else if (!likelyIndoors) {
@@ -577,7 +577,7 @@ class IndoorLocationView @JvmOverloads constructor(
     val checkpointPaint = Paint().apply {
         color = android.graphics.Color.RED // (我用紅色)
         style = Paint.Style.STROKE // (空心)
-        strokeWidth = 5f // (線條粗度)
+        strokeWidth = 10f // (線條粗度)
         isAntiAlias = true
     }
     fun setLocationColors(primaryColor: Int, accuracyColor: Int, centerColor: Int) {
@@ -610,6 +610,27 @@ class IndoorLocationView @JvmOverloads constructor(
                 canvas.drawCircle(viewX, viewY, 10f, locationCenterPaint)
             }
         }
+
+        //繪製集點任務的紅圈圈 (Checkpoints)
+        checkpointLocations?.let { points ->
+            drawable?.let { d ->
+                val bitmapWidth = d.intrinsicWidth.toFloat()
+                val bitmapHeight = d.intrinsicHeight.toFloat()
+
+                points.forEach { pt ->
+                    // 將百分比座標轉換為圖片像素座標
+                    val pixelX = (pt.x / 100.0f) * bitmapWidth
+                    val pixelY = (pt.y / 100.0f) * bitmapHeight
+
+                    // 將圖片像素座標轉換為螢幕觸控座標 (考慮縮放和平移)
+                    val screenPoint = useTransformCoordBitmapToTouch(pixelX, pixelY)
+
+                    // 繪製紅圈圈 (半徑設為 25f，可依需求調整)
+                    canvas.drawCircle(screenPoint.x, screenPoint.y, 25f, checkpointPaint)
+                }
+            }
+        }
+
     }
     /**
      * 以動畫方式縮放並平移到指定的「百分比」座標。

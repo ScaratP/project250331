@@ -57,7 +57,8 @@ import androidx.compose.ui.unit.Dp
 class NoteEditorState(
     initialText: TextFieldValue = TextFieldValue(""),
     initialNote: Note? = null,
-    val isNewNote: Boolean = true
+    val isNewNote: Boolean = true,
+    prefilledCourseName: String? = null
 ) {
     // 可觀察狀態
     var textFieldValue by mutableStateOf(initialText)
@@ -104,6 +105,11 @@ class NoteEditorState(
                 hasErrors = true
             }
         } else {
+            if (prefilledCourseName != null) {
+                val startText = "[$prefilledCourseName] "
+                textFieldValue = TextFieldValue(startText, selection = TextRange(startText.length))
+                annotatedString = AnnotatedString(startText)
+            }
             addToHistory()
         }
         updateUndoRedoState()
@@ -489,7 +495,8 @@ data class HistoryState(
 @Composable
 fun EnhancedNoteScreen(
     onNavigateToNoteList: () -> Unit,
-    noteId: Int? = null // 新增參數，如果有提供 noteId 表示是編輯模式
+    noteId: Int? = null,
+    prefilledCourseName: String? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -510,7 +517,12 @@ fun EnhancedNoteScreen(
     val focusRequester = remember { FocusRequester() }
 
     // 筆記編輯器狀態
-    val editorState = remember { NoteEditorState(isNewNote = noteId == null) }
+    val editorState = remember {
+        NoteEditorState(
+            isNewNote = noteId == null,
+            prefilledCourseName = prefilledCourseName // <--- 傳入參數
+        )
+    }
 
     // 加載現有筆記的資料
     LaunchedEffect(noteId) {
