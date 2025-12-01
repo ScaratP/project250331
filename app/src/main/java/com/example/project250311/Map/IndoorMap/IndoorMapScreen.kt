@@ -463,13 +463,49 @@ fun IndoorMapScreen(
         return gx to gy
     }
 
+    // 讀取 raw 參考點（入口/電梯/樓梯等），僅回傳對應指定 imageRes 的點
+    fun loadRawReferencePointsForImage(imageRes: Int): List<ReferencePointEntity> {
+        return try {
+            val rawId = context.resources.getIdentifier("reference_entrance_points_output", "raw", context.packageName)
+            if (rawId == 0 || imageRes == 0) return emptyList()
+            val txt = context.resources.openRawResource(rawId).bufferedReader().use { it.readText() }
+            val regex = Regex("ReferencePointEntity\\(\"([^\"]+)\",\\s*\"([^\"]*)\",\\s*([0-9eE.+-]+),\\s*([0-9eE.+-]+),\\s*R\\.drawable\\.([^,\\)\\s]+),\\s*([0-9]+),\\s*\"([^\"]*)\",\\s*\"([^\"]*)\",\\s*([0-9]+)\\)")
+            val out = mutableListOf<ReferencePointEntity>()
+            val imageResName = try { context.resources.getResourceEntryName(imageRes) } catch (_: Exception) { null }
+            for (m in regex.findAll(txt)) {
+                try {
+                    val id = m.groups[1]?.value ?: continue
+                    val name = m.groups[2]?.value ?: ""
+                    val x = m.groups[3]?.value?.toDoubleOrNull() ?: 0.0
+                    val y = m.groups[4]?.value?.toDoubleOrNull() ?: 0.0
+                    val drawableToken = m.groups[5]?.value ?: ""
+                    val scan = m.groups[6]?.value?.toIntOrNull() ?: 0
+                    val type = m.groups[7]?.value ?: "CLASSROOM"
+                    val buildingId = m.groups[8]?.value ?: ""
+                    val floorId = m.groups[9]?.value?.toIntOrNull() ?: 0
+
+                    val numeric = drawableToken.toIntOrNull()
+                    val tokenResName = try {
+                        if (numeric != null && numeric != 0) try { context.resources.getResourceEntryName(numeric) } catch (_: Exception) { drawableToken } else drawableToken
+                    } catch (_: Exception) { drawableToken }
+
+                    val matches = imageResName != null && tokenResName.equals(imageResName, true)
+                    if (matches) {
+                        out.add(ReferencePointEntity(id, name, x, y, imageRes, scan, type, buildingId, floorId))
+                    }
+                } catch (_: Exception) {}
+            }
+            out
+        } catch (_: Exception) { emptyList() }
+    }
+
     // Helper: resolve preferred ENTRANCE reference point
     fun resolvePreferredEntrance(
         all: List<ReferencePointEntity>,
         targetEntity: ReferencePointEntity,
         entryPointId: String?
     ): ReferencePointEntity? {
-        // 1) If explicit entryPointId provided, prefer that
+        // 1) 明確指定入口 id 時，直接採用
         if (!entryPointId.isNullOrBlank()) {
             val byId = all.firstOrNull { it.id == entryPointId }
             if (byId != null) {
@@ -481,44 +517,31 @@ fun IndoorMapScreen(
             }
         }
 
-        // 2) Prefer an ENTRANCE in the same building as the target.
-        //    If the DB buildingId looks wrong, derive candidates from the target id/name (e.g. "sec102" -> "SEC").
-        val candidateBuildings = mutableListOf<String>()
-        try {
-            if (!targetEntity.buildingId.isNullOrBlank()) candidateBuildings.add(targetEntity.buildingId.uppercase())
-            // derive from id/name prefix
-            val prefixSource = (targetEntity.id.ifBlank { targetEntity.name }).lowercase()
-            val prefix = prefixSource.takeWhile { it.isLetter() }
-            when (prefix) {
-                "sea", "se" -> if (!candidateBuildings.contains("SE")) candidateBuildings.add("SE")
-                "seb" -> if (!candidateBuildings.contains("SEB")) candidateBuildings.add("SEB")
-                "sec" -> if (!candidateBuildings.contains("SEC")) candidateBuildings.add("SEC")
-            }
-        } catch (_: Exception) { }
-
-        // search entrances by candidateBuildings in order
-        for (b in candidateBuildings) {
-            val found = all.firstOrNull { it.type.equals("ENTRANCE", true) && it.buildingId.equals(b, true) }
-            if (found != null) {
-                Log.d("IndoorMap.UI", "resolvePreferredEntrance: chosen by building-candidate=$b id=${found.id}")
-                return found
-            }
+        // 2) 依目的地前綴強制對應到固定入口：
+        //    sec* -> SEC 入口； seb* -> SEB 入口； 其他 -> SE(SEA) 入口
+        val prefixSource = (targetEntity.id.ifBlank { targetEntity.name }).lowercase()
+        val letters = prefixSource.takeWhile { it.isLetter() }
+        val mappedBuilding = when {
+            letters.startsWith("sec") -> "SEC"
+            letters.startsWith("seb") -> "SEB"
+            else -> "SE"
+        }
+        val forced = all.firstOrNull { it.type.equals("ENTRANCE", true) && it.buildingId.equals(mappedBuilding, true) }
+        if (forced != null) {
+            Log.d("IndoorMap.UI", "resolvePreferredEntrance: forced by prefix '$letters' -> building=$mappedBuilding id=${forced.id}")
+            return forced
         }
 
-        // 3) fallback chain: prefer SEB -> SE -> any ENTRANCE
+        // 3) 回退：同建築 -> 指定序列(SEB -> SE) -> 任一入口
+        val sameBld = all.firstOrNull { it.type.equals("ENTRANCE", true) && !targetEntity.buildingId.isNullOrBlank() && it.buildingId.equals(targetEntity.buildingId, true) }
+        if (sameBld != null) return sameBld
+
         val seb = all.firstOrNull { it.type.equals("ENTRANCE", true) && it.buildingId.equals("SEB", true) }
-        if (seb != null) {
-            Log.d("IndoorMap.UI", "resolvePreferredEntrance: fallback to SEB entrance=${seb.id}")
-            return seb
-        }
+        if (seb != null) return seb
         val se = all.firstOrNull { it.type.equals("ENTRANCE", true) && it.buildingId.equals("SE", true) }
-        if (se != null) {
-            Log.d("IndoorMap.UI", "resolvePreferredEntrance: fallback to SE entrance=${se.id}")
-            return se
-        }
+        if (se != null) return se
 
         val any = all.firstOrNull { it.type.equals("ENTRANCE", true) }
-        if (any != null) Log.d("IndoorMap.UI", "resolvePreferredEntrance: fallback to any entrance=${any.id}")
         return any
     }
 
@@ -697,7 +720,7 @@ fun IndoorMapScreen(
     fun imgToScreen(p: Offset) = Offset(p.x * scale + offsetX, p.y * scale + offsetY)
 
     // 當透過外部參數 (targetPointId) 呼叫時，自動載入目標與入口並計算路徑
-    LaunchedEffect(targetPointId, entryPointId, currentImageRes, imageBitmap) {
+    LaunchedEffect(targetPointId, entryPointId) {
         if (targetPointId == null) return@LaunchedEffect
         try {
             // 取得所有參考點（一次性）
@@ -726,10 +749,13 @@ fun IndoorMapScreen(
                     previewEntryEntity = entryEntity
                     previewTargetEntity = targetEntity
                     try {
-                        val floorEntity = withContext(Dispatchers.IO) { db.floorDao().getFloorById(entryEntity.floorId) }
-                        previewTargetFloorName = "${targetEntity.buildingId}${targetEntity.floorId}樓"
+                        val targetFloorEntity = withContext(Dispatchers.IO) { db.floorDao().getFloorById(targetEntity.floorId) }
+                        val floorNum = targetFloorEntity?.floorNumber ?: targetEntity.floorId
+                        val bld = targetEntity.buildingId?.uppercase().orEmpty()
+                        previewTargetFloorName = "$bld${floorNum}樓"
                     } catch (_: Exception) {
-                        previewTargetFloorName = "${targetEntity.floorId}樓"
+                        val bld = targetEntity.buildingId?.uppercase().orEmpty()
+                        previewTargetFloorName = "$bld${targetEntity.floorId}樓"
                     }
 
                     // set current image to entry's floor image and wait for bitmap
@@ -745,36 +771,50 @@ fun IndoorMapScreen(
 
                     val bmp2 = imageBitmap?.asAndroidBitmap()
                     if (bmp2 != null) {
-                        // find entrance on that floor (ENTRANCE) and the target vertical candidate (STAIRS/ELEVATOR)
-                        val floorPoints = all.filter { it.imageId == entryEntity.imageId }
-                        val entranceOnFloor = floorPoints.firstOrNull { it.type.equals("ENTRANCE", true) }
-                        val vertical = floorPoints.filter { it.type.equals("STAIRS", true) || it.type.equals("ELEVATOR", true) }
-
-                        // Simplified deterministic matching: use building prefix to prefer elevator/stairs and match by name fragment
-                        val prefix = targetEntity.id.takeWhile { it.isLetter() }.lowercase()
-                        val preferredType = when (prefix) {
-                            "sea", "seb" -> "ELEVATOR"
-                            "sec" -> "STAIRS"
-                            else -> null
+                        // find entrance on that floor (use resolved entryEntity explicitly) and the target vertical candidate (STAIRS/ELEVATOR)
+                        val floorPointsDb = all.filter { it.imageId == entryEntity.imageId }
+                        val floorPointsRaw = loadRawReferencePointsForImage(entryEntity.imageId)
+                        val floorPoints = (floorPointsDb + floorPointsRaw).distinctBy { it.id }
+                        val entranceOnFloor = entryEntity
+                        val verticalAll = floorPoints.filter {
+                            it.type.equals("STAIRS", true) ||
+                            it.type.equals("ELEVATOR", true) ||
+                            it.name.contains("電梯", ignoreCase = true) ||
+                            it.name.contains("樓梯", ignoreCase = true) ||
+                            it.name.contains("elevator", ignoreCase = true) ||
+                            it.name.contains("stair", ignoreCase = true)
                         }
+                        val elevatorsOnFloor = verticalAll.filter {
+                            it.type.equals("ELEVATOR", true) ||
+                            it.name.contains("電梯", ignoreCase = true) ||
+                            it.name.contains("elevator", ignoreCase = true)
+                        }
+
+                        // Deterministic matching: always prefer elevator on entry preview
+                        val prefix = targetEntity.id.takeWhile { it.isLetter() }.lowercase()
                         val entryFloorNumStr = if (entryEntity.imageId != 0) {
                             try { context.resources.getResourceEntryName(entryEntity.imageId).takeLastWhile { it.isDigit() } } catch (_: Exception) { null }
                         } else null
                         val wantFrag = if (!prefix.isBlank() && !entryFloorNumStr.isNullOrBlank()) (prefix + entryFloorNumStr).lowercase() else null
 
                         var targetVertical: ReferencePointEntity? = null
-                        if (wantFrag != null) targetVertical = vertical.firstOrNull { it.buildingId.equals(targetEntity.buildingId, true) && it.name.lowercase().contains(wantFrag) }
-                        if (targetVertical == null && preferredType != null) targetVertical = vertical.firstOrNull { it.buildingId.equals(targetEntity.buildingId, true) && it.type.equals(preferredType, true) }
-                        if (targetVertical == null && prefix.isNotBlank()) targetVertical = vertical.firstOrNull { it.buildingId.equals(targetEntity.buildingId, true) && it.name.lowercase().contains(prefix) }
-                        if (targetVertical == null) targetVertical = vertical.firstOrNull()
+                        // 1) elevator with matching building + fragment (e.g., sec1)
+                        if (wantFrag != null) targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(wantFrag) }
+                        // 2) any elevator matching prefix (sec/seb/sea)
+                        if (targetVertical == null && prefix.isNotBlank()) targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(prefix) }
+                        // 3) any elevator on this floor
+                        if (targetVertical == null) targetVertical = elevatorsOnFloor.firstOrNull()
+                        // 4) fallback to any vertical matching prefix
+                        if (targetVertical == null && prefix.isNotBlank()) targetVertical = verticalAll.firstOrNull { it.name.lowercase().contains(prefix) }
+                        // 5) last resort: any vertical
+                        if (targetVertical == null) targetVertical = verticalAll.firstOrNull()
 
                         val sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
                         val gPoint = targetVertical?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
 
                         start = sPoint
                         goal = gPoint
-                        // ensure the UI shows entrance and vertical points
-                        showClassrooms = true
+                        // 預覽階段不自動顯示教室點（僅保留使用者手動切換）
                         if (autoStart) recomputePathAsync()
                     }
                     return@LaunchedEffect
@@ -815,10 +855,13 @@ fun IndoorMapScreen(
                         previewTargetEntity = targetEntity
                         // try to resolve a human-friendly floor name for button label
                         try {
-                            val floorEntity = withContext(Dispatchers.IO) { db.floorDao().getFloorById(entryEntity.floorId) }
-                            previewTargetFloorName = "${targetEntity.buildingId}${targetEntity.floorId}樓"
+                            val targetFloorEntity = withContext(Dispatchers.IO) { db.floorDao().getFloorById(targetEntity.floorId) }
+                            val floorNum = targetFloorEntity?.floorNumber ?: targetEntity.floorId
+                            val bld = targetEntity.buildingId?.uppercase().orEmpty()
+                            previewTargetFloorName = "$bld${floorNum}樓"
                         } catch (_: Exception) {
-                            previewTargetFloorName = "${targetEntity.floorId}樓"
+                            val bld = targetEntity.buildingId?.uppercase().orEmpty()
+                            previewTargetFloorName = "$bld${targetEntity.floorId}樓"
                         }
 
                         // set current image to entry's floor image
@@ -836,19 +879,45 @@ fun IndoorMapScreen(
 
                         val bmp2 = imageBitmap?.asAndroidBitmap()
                         if (bmp2 != null) {
-                            // find entrance on that floor (ENTRANCE) and the target vertical candidate (STAIRS/ELEVATOR)
-                            val floorPoints = all.filter { it.imageId == entryEntity.imageId }
-                            val entranceOnFloor = floorPoints.firstOrNull { it.type.equals("ENTRANCE", true) }
-                            val vertical = floorPoints.filter { it.type.equals("STAIRS", true) || it.type.equals("ELEVATOR", true) }
-                            val targetVertical = vertical.firstOrNull { it.id == entryEntity.id } ?: vertical.firstOrNull()
+                            // find entrance on that floor (use resolved entryEntity explicitly) and the target vertical candidate (STAIRS/ELEVATOR)
+                            val floorPointsDb = all.filter { it.imageId == entryEntity.imageId }
+                            val floorPointsRaw = loadRawReferencePointsForImage(entryEntity.imageId)
+                            val floorPoints = (floorPointsDb + floorPointsRaw).distinctBy { it.id }
+                            val entranceOnFloor = entryEntity
+                            val verticalAll = floorPoints.filter {
+                                it.type.equals("STAIRS", true) ||
+                                it.type.equals("ELEVATOR", true) ||
+                                it.name.contains("電梯", ignoreCase = true) ||
+                                it.name.contains("樓梯", ignoreCase = true) ||
+                                it.name.contains("elevator", ignoreCase = true) ||
+                                it.name.contains("stair", ignoreCase = true)
+                            }
+                            val elevatorsOnFloor = verticalAll.filter {
+                                it.type.equals("ELEVATOR", true) ||
+                                it.name.contains("電梯", ignoreCase = true) ||
+                                it.name.contains("elevator", ignoreCase = true)
+                            }
+
+                            // Elevator-first deterministic selection (same as earlier preview branch)
+                            val prefix = targetEntity.id.takeWhile { it.isLetter() }.lowercase()
+                            val entryFloorNumStr = if (entryEntity.imageId != 0) {
+                                try { context.resources.getResourceEntryName(entryEntity.imageId).takeLastWhile { it.isDigit() } } catch (_: Exception) { null }
+                            } else null
+                            val wantFrag = if (!prefix.isBlank() && !entryFloorNumStr.isNullOrBlank()) (prefix + entryFloorNumStr).lowercase() else null
+
+                            var targetVertical: ReferencePointEntity? = null
+                            if (wantFrag != null) targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(wantFrag) }
+                            if (targetVertical == null && prefix.isNotBlank()) targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(prefix) }
+                            if (targetVertical == null) targetVertical = elevatorsOnFloor.firstOrNull()
+                            if (targetVertical == null && prefix.isNotBlank()) targetVertical = verticalAll.firstOrNull { it.name.lowercase().contains(prefix) }
+                            if (targetVertical == null) targetVertical = verticalAll.firstOrNull()
 
                             val sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
                             val gPoint = targetVertical?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
 
                             start = sPoint
                             goal = gPoint
-                            // ensure the UI shows entrance and vertical points
-                            showClassrooms = true
+                            // 預覽階段不自動顯示教室點（僅保留使用者手動切換）
                             if (autoStart) recomputePathAsync()
                         }
                         return@LaunchedEffect
@@ -1307,33 +1376,24 @@ fun IndoorMapScreen(
                         ) { Text("尚未載入平面圖資源") }
                     }
             
-            // 左下角返回室外地圖按鈕
-            FloatingActionButton(
-                onClick = { navController?.popBackStack() },
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(12.dp)
-                    .zIndex(3f),
-                containerColor = MaterialTheme.colorScheme.primary
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "返回地圖",
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-
-            // 顯示目前解析到的入口資訊（除錯用）
-            resolvedEntranceInfo?.let { info ->
-                Box(modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(12.dp)
-                    .zIndex(4f)) {
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))) {
-                        Text(text = "入口: $info", modifier = Modifier.padding(8.dp), style = MaterialTheme.typography.labelSmall)
-                    }
+            // 左下角返回室外地圖按鈕（僅在有導航時顯示：start 與 goal 皆存在）
+            if (start != null && goal != null) {
+                FloatingActionButton(
+                    onClick = { navController?.popBackStack() },
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(12.dp)
+                        .zIndex(3f),
+                    containerColor = MaterialTheme.colorScheme.primary
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "返回地圖",
+                        tint = MaterialTheme.colorScheme.onPrimary
+                    )
                 }
             }
+
 
                 // 若處於 entry preview 階段，顯示底部按鈕讓使用者表示「已到達指定樓層」，按下後切換到目標樓層並計算從該樓層垂直點到教室的路徑
                 if (previewEntryPhase && previewEntryEntity != null && previewTargetEntity != null) {
@@ -1366,28 +1426,44 @@ fun IndoorMapScreen(
 
                                 // 查找目標樓層的垂直點候選
                                 val all = withContext(Dispatchers.IO) { refDao.getAllReferencePoints().first() }
-                                val destCandidates = all.filter { it.imageId == target.imageId && (it.type.equals("STAIRS", true) || it.type.equals("ELEVATOR", true)) }
+                                val rawOnTarget = loadRawReferencePointsForImage(target.imageId)
+                                val destCandidates = (all + rawOnTarget).filter {
+                                    it.imageId == target.imageId && (
+                                        it.type.equals("STAIRS", true) ||
+                                        it.type.equals("ELEVATOR", true) ||
+                                        it.name.contains("電梯", ignoreCase = true) ||
+                                        it.name.contains("樓梯", ignoreCase = true) ||
+                                        it.name.contains("elevator", ignoreCase = true) ||
+                                        it.name.contains("stair", ignoreCase = true)
+                                    )
+                                }.distinctBy { it.id }
 
-                                // Simplified deterministic mapping: prefer elevator/stairs by building prefix
+                                // 簡化且固定邏輯：目標樓層一律優先使用電梯 (ELEVATOR)，再回退其他垂直點
                                 var matched: ReferencePointEntity? = null
                                 try {
                                     val resName = try { context.resources.getResourceEntryName(target.imageId) } catch (_: Exception) { null }
                                     val floorNumStr = resName?.takeLastWhile { it.isDigit() }
-                                    val prefix = entry.name.takeWhile { it.isLetter() }.lowercase()
-                                    val preferredType = when (prefix) {
-                                        "sea", "seb" -> "ELEVATOR"
-                                        "sec" -> "STAIRS"
-                                        else -> null
-                                    }
+                                    val prefix = (target.id.ifBlank { target.name }).takeWhile { it.isLetter() }.lowercase()
+                                    val preferredType = "ELEVATOR"
 
                                     val wantFragment = if (!prefix.isBlank() && !floorNumStr.isNullOrBlank()) (prefix + floorNumStr).lowercase() else null
-                                    val stairsAll = all.filter { it.type.equals("STAIRS", true) || it.type.equals("ELEVATOR", true) }
-                                    val destCandidatesFiltered = stairsAll.filter { it.imageId == target.imageId }
+                                    val floorVerticalAll = destCandidates
+                                    val elevatorsOnFloor = floorVerticalAll.filter {
+                                        it.type.equals("ELEVATOR", true) ||
+                                        it.name.contains("電梯", ignoreCase = true) ||
+                                        it.name.contains("elevator", ignoreCase = true)
+                                    }
 
-                                    if (wantFragment != null) matched = destCandidatesFiltered.firstOrNull { it.buildingId.equals(target.buildingId, true) && it.name.lowercase().contains(wantFragment) }
-                                    if (matched == null && preferredType != null) matched = destCandidatesFiltered.firstOrNull { it.buildingId.equals(target.buildingId, true) && it.type.equals(preferredType, true) }
-                                    if (matched == null && prefix.isNotBlank()) matched = destCandidatesFiltered.firstOrNull { it.buildingId.equals(target.buildingId, true) && it.name.lowercase().contains(prefix) }
-                                    if (matched == null) matched = destCandidatesFiltered.firstOrNull()
+                                    // 1) 優先名稱包含 prefix+樓層數字 的電梯（例如 sea1 / seb1 / sec1）
+                                    if (wantFragment != null) matched = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(wantFragment) }
+                                    // 2) 名稱包含 prefix 的電梯
+                                    if (matched == null && prefix.isNotBlank()) matched = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(prefix) }
+                                    // 3) 任何電梯
+                                    if (matched == null) matched = elevatorsOnFloor.firstOrNull()
+                                    // 4) 名稱包含 prefix 的任一垂直點（電梯/樓梯）
+                                    if (matched == null && prefix.isNotBlank()) matched = floorVerticalAll.firstOrNull { it.name.lowercase().contains(prefix) }
+                                    // 5) 最後回退：任一垂直點
+                                    if (matched == null) matched = floorVerticalAll.firstOrNull()
                                 } catch (e: Exception) {
                                     Log.d("IndoorMap.UI", "matching stairs failed: ${e.message}")
                                 }
@@ -1401,8 +1477,7 @@ fun IndoorMapScreen(
                                 start = startPt
                                 goal = goalPt
                                 previewEntryPhase = false
-                                // 顯示教室點並開始計算
-                                showClassrooms = true
+                                // 僅開始計算路徑；教室點預設保持關閉
                                 recomputePathAsync()
                             }
                         }) {

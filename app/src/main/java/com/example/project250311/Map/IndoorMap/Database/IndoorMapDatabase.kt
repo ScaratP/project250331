@@ -505,22 +505,7 @@ abstract class IndoorMapDatabase : RoomDatabase() {
                     )
             database.floorDao().insertAllFloors(extraFloors)
 
-            // 3. 創建理工學院入口參考點
-            val entrancePoint =
-                    ReferencePointEntity(
-                            id = "entrance_se",
-                            name = "理工學院入口",
-                            x = 36.21,
-                            y = 68.26,
-                            imageId = R.drawable.se1,
-                            scanCount = 0,
-                            type = "ENTRANCE",
-                            buildingId = "SE",
-                            floorId = 1
-                    )
-            database.referencePointDao().insertReferencePoint(entrancePoint)
-
-            // 4. 匯入教室點與樓梯點（改由 raw 檔案解析）
+            // 3. 匯入教室點與樓梯點（改由 raw 檔案解析，入口一律使用 raw 檔 reference_entrance_points_output.txt 中的資料，不再硬編碼）
             importClassroomPointsFromRaw(context, database)
             // 新增：自動匯入 stairs 資料（type = "STAIRS"）
             importStairsPointsFromRaw(context, database)
