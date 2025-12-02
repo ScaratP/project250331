@@ -21,7 +21,9 @@ import android.net.wifi.ScanResult
 import android.net.wifi.WifiManager
 import android.util.AttributeSet
 import android.util.Log
+import androidx.compose.ui.geometry.Offset
 import androidx.core.content.ContextCompat
+import com.example.project250311.R
 import com.ortiz.touchview.TouchImageView
 import kotlinx.coroutines.delay
 import org.json.JSONObject
@@ -34,6 +36,33 @@ import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import kotlin.collections.List
 import kotlin.collections.component1
+
+
+fun getFloorDisplayName(groupName: String?): String {
+    return when (groupName?.lowercase()) {
+        "se1" -> "理工1樓"
+        "se2" -> "理工2樓"
+        "se3" -> "理工3樓"
+        "sea4" -> "A棟4樓"
+        "sea5" -> "A棟5樓"
+        "seb4" -> "B棟4樓"
+        "sec4" -> "C棟4樓"
+        "sec5" -> "C棟5樓"
+        else -> "定位中"
+    }
+}
+
+val floorPlans =
+    listOf(
+        "SE1" to R.drawable.se1,
+        "SE2" to R.drawable.se2,
+        "SE3" to R.drawable.se3,
+        "SEA4" to R.drawable.sea4,
+        "SEA5" to R.drawable.sea5,
+        "SEB4" to R.drawable.seb4,
+        "SEC4" to R.drawable.sec4,
+        "SEC5" to R.drawable.sec5
+    )
 
 data class AppPositionState(
     // 計算距離用
@@ -57,6 +86,10 @@ data class NormalizationParams(
     val la_mean: Double,
     val la_std: Double
 )
+
+fun getMapResId(groupName: String?): Int {
+    return floorPlans.find { it.first.equals(groupName, ignoreCase = true) }?.second ?: 0
+}
 
 fun loadNormalizationParams(context: Context): NormalizationParams? {
     return try {

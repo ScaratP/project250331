@@ -42,6 +42,8 @@ import androidx.compose.material.icons.filled.*
 import android.app.Application
 import androidx.compose.ui.text.style.TextAlign
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.project250311.Map.IndoorMap.LocationViewModel
 
 fun getMapDrawableResId(groupName: String): Int {
     return when (groupName) {
@@ -332,13 +334,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 @Composable
 fun GameScreen(
     navController: NavController,
-    viewModel: GameViewModel
+    viewModel: GameViewModel,
+    locationViewModel: LocationViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val currentMapGroup by viewModel.currentMapGroup.collectAsState()
     val currentPercentage by viewModel.currentPercentage.collectAsState()
     val currentMapCheckpoints by viewModel.currentMapCheckpoints.collectAsState()
-    val isLikelyIndoors by viewModel.isLikelyIndoors.collectAsState()
+    val isLikelyIndoors by locationViewModel.isLikelyIndoors.collectAsState()
 
     val context = LocalContext.current
     val primaryColor = MaterialTheme.colorScheme.primary
@@ -381,7 +384,7 @@ fun GameScreen(
                 shape = MaterialTheme.shapes.medium
             ) {
                 if (currentMapGroup != null) {
-                    if (isLikelyIndoors){
+                    if (isLikelyIndoors == true){
                         val mapImageRes = getMapDrawableResId(currentMapGroup!!)
                         val checkpointPoints = remember(currentMapCheckpoints) {
                             currentMapCheckpoints.map {
@@ -413,15 +416,8 @@ fun GameScreen(
                         )
                     }else{
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    text = "現在好像不在理工學院內\n或是需要打開更多權限\n設定➡️定位服務➡️模式\n選擇高精確度（GPS+Wi-Fi+行動網路）",
-                                    color = Color.Gray,
-                                    textAlign = TextAlign.Center
+                            CircularProgressIndicator()
 
-                                )
-
-                            }
                         }
                     }
                 } else {

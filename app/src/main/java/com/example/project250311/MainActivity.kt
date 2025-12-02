@@ -511,7 +511,8 @@ fun AppNavHost(
                 floorId = if (floor < 0) null else floor,
                 targetPointId = if (target.isBlank()) null else target,
                 entryPointId = if (entry.isBlank()) null else entry,
-                autoStart = true
+                autoStart = true,
+                locationViewModel = positioningViewModel
             )
         }
 
@@ -594,7 +595,8 @@ fun AppNavHost(
 
             com.example.project250311.Game.GameScreen(
                 navController = navController,
-                viewModel = gameViewModel
+                viewModel = gameViewModel,
+                locationViewModel = positioningViewModel
             )
         }
 
