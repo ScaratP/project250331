@@ -649,25 +649,32 @@ fun MapScreen(navController: NavHostController) {
                                                 if (destRef != null) {
                                                     val buildingId = destRef.buildingId
                                                     val floorId = destRef.floorId
-                                                    // Choose an entry point on 1F deterministically based on building prefix
-                                                    val floorOnePoints = refDao.getReferencePointsByFloor(buildingId, 1).first()
-                                                    val vertical1 = floorOnePoints.filter { it.type.equals("STAIRS", true) || it.type.equals("ELEVATOR", true) }
-                                                    val prefix = destRef.id.takeWhile { it.isLetter() }.lowercase()
-                                                    val preferredType = when (prefix) {
-                                                        "sea", "seb" -> "ELEVATOR"
-                                                        "sec" -> "STAIRS"
-                                                        else -> null
-                                                    }
-                                                    val wantFrag1 = if (prefix.isNotBlank()) (prefix + "1") else null
-                                                    var chosenEntry: com.example.project250311.Map.IndoorMap.Database.ReferencePointEntity? = null
-                                                    if (wantFrag1 != null) chosenEntry = vertical1.firstOrNull { it.buildingId.equals(buildingId, true) && it.name.lowercase().contains(wantFrag1) }
-                                                    if (chosenEntry == null && preferredType != null) chosenEntry = vertical1.firstOrNull { it.buildingId.equals(buildingId, true) && it.type.equals(preferredType, true) }
-                                                    if (chosenEntry == null && prefix.isNotBlank()) chosenEntry = vertical1.firstOrNull { it.buildingId.equals(buildingId, true) && it.name.lowercase().contains(prefix) }
-                                                    if (chosenEntry == null) chosenEntry = vertical1.firstOrNull()
 
+                                                    // Derive desired building/prefix from destination NAME (id 可能是 UUID，不能用來判斷)
+                                                    val raw = destRef.name.ifBlank { destRef.id }
+                                                    val prefix = raw.takeWhile { it.isLetter() }.lowercase()
+                                                    // 與室內畫面規則一致：A 棟使用 SEA，B=SEB，C=SEC
+                                                    val effectiveBuildingId = when (prefix) {
+                                                        "seb" -> "SEB"
+                                                        "sec" -> "SEC"
+                                                        else -> "SEA"
+                                                    }
+                                                    val desiredEntranceName = when (prefix) {
+                                                        "seb" -> "seb入口"
+                                                        "sec" -> "sec入口"
+                                                        else -> "sea入口"
+                                                    }
+
+                                                    // Prefer ENTRANCE by exact name across all floors; fallback by building; then any ENTRANCE
+                                                    val nameMatches = refDao.searchReferencePointsByName("%入口%").first()
+                                                    val entrances = nameMatches.filter { it.type.equals("ENTRANCE", true) }
+                                                    val chosenByName = entrances.firstOrNull { it.name.equals(desiredEntranceName, true) }
+                                                    val chosenByBuilding = entrances.firstOrNull { it.buildingId.equals(effectiveBuildingId, true) }
+                                                    val chosenEntrance = chosenByName ?: chosenByBuilding ?: entrances.firstOrNull()
+
+                                                    // For outdoor routing still use geo entrance mapping
                                                     val entranceLatLng = SEEntrances.getNearestEntrance(destRef.name).location
 
-                                                    // 把導航目的地改為入口（戶外路徑仍使用外部地點 mapping）
                                                     destination = entranceLatLng
                                                     lastRerouteLoc = originLatLng
                                                     travelTimeText = null
@@ -680,25 +687,24 @@ fun MapScreen(navController: NavHostController) {
                                                         onError = { isRouting = false; errorMsg = it; scope.launch { delay(3000); errorMsg = null } }
                                                     )
 
-                                                    // 設定待進入室內導航的參數（entryPointId 使用選出的 1F vertical id 或 null）
-                                                    if (chosenEntry != null) {
-                                                        Log.d("MapScreen.Indoor", "Chosen 1F entry id=${chosenEntry.id} name=${chosenEntry.name} imageId=${chosenEntry.imageId} floorId=${chosenEntry.floorId}")
+                                                    val finalEntryId = chosenEntrance?.id
+                                                    if (finalEntryId != null) {
+                                                        Log.d("MapScreen.Indoor", "Chosen entry by dest-name=${desiredEntranceName}, id=$finalEntryId, building=$effectiveBuildingId")
                                                     } else {
-                                                        Log.d("MapScreen.Indoor", "No 1F vertical entry found; using nearest SEEntrances location=$entranceLatLng for destination=${destRef.id}")
+                                                        Log.d("MapScreen.Indoor", "No ENTRANCE found by name/building; using outdoor-only route temporarily")
                                                     }
                                                     pendingIndoorParams = IndoorNavParams(
                                                         buildingId = buildingId,
                                                         floorId = floorId,
                                                         targetPointId = destRef.id,
-                                                        entryPointId = chosenEntry?.id
+                                                        entryPointId = finalEntryId
                                                     )
                                                 }
                                             } catch (e: Exception) {
                                                 // 不阻斷主流程，只顯示錯誤
                                                 errorMsg = "解析室內教室資料失敗：${e.localizedMessage}"
                                                 scope.launch { delay(3000); errorMsg = null }
-                                                // 若發生錯誤，回退到一般的戶外路線畫法以免無路徑
-                                                drawRoute(
+                                                 drawRoute(
                                                     origin = originLatLng, dest = destLatLng,
                                                     onStart = { isRouting = true },
                                                     onSuccess = { points -> isRouting = false; routePoints = points },
@@ -913,6 +919,8 @@ fun drawRoute(
     onTime: (String) -> Unit,
     onError: (String) -> Unit
 ) {
+    Log.d("MapDebug", "準備開始導航...") // [除錯] 確認函式被呼叫
+    Log.d("MapDebug", "起點: $origin, 終點: $dest") // [除錯] 確認座標是否為 null
     if (origin == null) {
         onError("尚未取得目前位置")
         return
@@ -920,9 +928,10 @@ fun drawRoute(
     onStart()
     val o = "${origin.latitude},${origin.longitude}"
     val d = "${dest.latitude},${dest.longitude}"
-    RetrofitInstance.api.getDirections(origin = o, destination = d, mode = "walking", apiKey = "AIzaSyDj1CTmLJMsvCTRwwVJrCFHp6Cqt7wVKp8")
+    RetrofitInstance.api.getDirections(origin = o, destination = d, mode = "walking", apiKey = "AIzaSyBnubSqzigFbf-LKcti9iD5kG5MUMHHogc")
         .enqueue(object : Callback<com.example.project250311.Map.model.DirectionsResponse> {
             override fun onResponse(call: Call<com.example.project250311.Map.model.DirectionsResponse>, response: Response<com.example.project250311.Map.model.DirectionsResponse>) {
+                Log.d("MapDebug", "API 回應代碼: ${response.code()}") // [除錯]
                 if (response.isSuccessful) {
                     val body = response.body()
                     val route = body?.routes?.firstOrNull()

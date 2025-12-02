@@ -1,0 +1,3 @@
+ReferencePointEntity("55bed98c-0409-4707-9f70-b2a4ff1738fb", "sea入口", 14.045018196105957, 21.400169372558594, R.drawable.se1, 0, "ENTRANCE", "A", 11),
+ReferencePointEntity("d96039a7-f6d3-498e-8ee5-8c636b0de2ba", "seb入口", 37.07670974731445, 67.73451232910156, R.drawable.se1, 0, "ENTRANCE", "B", 21),
+ReferencePointEntity("1a6040c2-6b76-486e-a6c7-bc5088c655de", "sec入口", 43.548091888427734, 91.88379821777345, R.drawable.se1, 0, "ENTRANCE", "C", 31),

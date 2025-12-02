@@ -1,6 +1,7 @@
 package com.example.project250311.Map.IndoorMap.Database
 
 import android.content.Context
+import android.util.Log
 import androidx.room.*
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -269,6 +270,9 @@ interface ReferencePointDao {
     @Query("SELECT * FROM reference_points WHERE imageId = :imageId AND type = 'CLASSROOM'")
     fun getClassroomPointsByImageId(imageId: Int): Flow<List<ReferencePointEntity>>
 
+    @Query("SELECT COUNT(*) FROM reference_points")
+    suspend fun countPoints(): Int
+
     @Query(
             "SELECT * FROM reference_points " +
                     "WHERE buildingId = :buildingId AND floorId = :floorId AND type = 'CLASSROOM'"
@@ -501,30 +505,10 @@ abstract class IndoorMapDatabase : RoomDatabase() {
                     )
             database.floorDao().insertAllFloors(extraFloors)
 
-            // 3. 創建理工學院入口參考點
-            val entrancePoint =
-                    ReferencePointEntity(
-                            id = "entrance_se",
-                            name = "理工學院入口",
-                            x = 36.21,
-                            y = 68.26,
-                            imageId = R.drawable.se1,
-                            scanCount = 0,
-                            type = "ENTRANCE",
-                            buildingId = "SE",
-                            floorId = 1
-                    )
-            database.referencePointDao().insertReferencePoint(entrancePoint)
-
-            // 4. 匯入教室點與樓梯點（改由 raw 檔案解析）
+            // 3. 匯入教室點與樓梯點（改由 raw 檔案解析，入口一律使用 raw 檔 reference_entrance_points_output.txt 中的資料，不再硬編碼）
             importClassroomPointsFromRaw(context, database)
             // 新增：自動匯入 stairs 資料（type = "STAIRS"）
             importStairsPointsFromRaw(context, database)
-
-            // 5. 添加走廊向量
-            val corridorVectors = getDefaultCorridorVectors()
-            database.corridorVectorDao().insertAllCorridorVectors(corridorVectors)
-
             // 6. 添加區域連通性
             val areas = getDefaultAreas()
             database.areaConnectivityDao().insertAllAreas(areas)
@@ -597,11 +581,15 @@ abstract class IndoorMapDatabase : RoomDatabase() {
                     mapOf(
                             // SE 1~3
                             "se1" to ("SE" to 1),
+                            "sea1" to ("SE" to 1),
                             "se2" to ("SE" to 2),
                             "se3" to ("SE" to 3),
                             // SE(A棟) 4~5
                             "sea4" to ("SE" to 4),
                             "sea5" to ("SE" to 5),
+                            // synonyms: sometimes converter emits sea1/seb1/sec1
+                            "seb1" to ("SEB" to 1),
+                            "sec1" to ("SEC" to 1),
                             // SEB(B棟) 4
                             "seb4" to ("SEB" to 4),
                             // SEC(C棟) 4~5
@@ -624,17 +612,18 @@ abstract class IndoorMapDatabase : RoomDatabase() {
                     val buildingFloor = allowedImageToBuildingFloor[imageName] ?: return@forEach
                     val (buildingId, floorNumber) = buildingFloor
 
-                    val imageId =
-                            context.resources.getIdentifier(
-                                    imageName,
-                                    "drawable",
-                                    context.packageName
-                            )
-                    if (imageId == 0) return@forEach
 
-                    val floorEntity =
-                            database.floorDao().getFloorByBuildingAndNumber(buildingId, floorNumber)
-                                    ?: return@forEach
+                    var imageId = context.resources.getIdentifier(imageName, "drawable", context.packageName)
+                    var floorEntity = database.floorDao().getFloorByBuildingAndNumber(buildingId, floorNumber)
+
+                    // If imageId not found but floor entity exists, use floor's imageId as fallback
+                    if (imageId == 0 && floorEntity != null) {
+                        imageId = floorEntity.imageId
+                    }
+
+                    // If floorEntity missing, try to look up (fallback will be handled below)
+                    if (floorEntity == null) floorEntity = database.floorDao().getFloorByBuildingAndNumber(buildingId, floorNumber)
+                    if (floorEntity == null) return@forEach
 
                     imported +=
                             ReferencePointEntity(
@@ -653,11 +642,15 @@ abstract class IndoorMapDatabase : RoomDatabase() {
             }
 
             if (imported.isNotEmpty()) {
-                database.referencePointDao().insertAllReferencePoints(imported)
+                                try {
+                                        Log.d("IndoorMap.DB", "importStairsPointsFromRaw: importing ${imported.size} reference points")
+                                } catch (_: Exception) {}
+                                database.referencePointDao().insertAllReferencePoints(imported)
             }
         }
 
-        // 由 res/raw/reference_points_stairs_output.txt 解析樓梯/電梯點並寫入 DB
+        // 由 res/raw/reference_points_stairs_output.txt 以及 res/raw/reference_entrance_points_output.txt 解析樓梯/電梯與出入口點並寫入 DB
+        // 兩種資料會一起處理，並以 image resource 對應到建築/樓層後寫入
         private suspend fun importStairsPointsFromRaw(
                 context: Context,
                 database: IndoorMapDatabase
@@ -668,323 +661,162 @@ abstract class IndoorMapDatabase : RoomDatabase() {
                             "se1" to ("SE" to 1),
                             "se2" to ("SE" to 2),
                             "se3" to ("SE" to 3),
+                            "sea1" to ("SE" to 1),
                             "sea4" to ("SE" to 4),
                             "sea5" to ("SE" to 5),
+                            "seb1" to ("SEB" to 1),
                             "seb4" to ("SEB" to 4),
+                            "sec1" to ("SEC" to 1),
                             "sec4" to ("SEC" to 4),
                             "sec5" to ("SEC" to 5)
                     )
 
+            // 支援的檔案清單（先處理 stairs 檔，再處理 entrance 檔）
+            val rawResList = listOf(R.raw.reference_points_stairs_output, R.raw.reference_entrance_points_output)
+
+            // Regex: 捕捉 id, name, x, y, drawableToken, scanCount, type
+            // 另外嘗試匹配可選的 building token 與 floor token（如出入口 raw 檔會帶 A/B/C 與 11/21/31）
             val pattern =
                     Regex(
-                            """ReferencePointEntity\("([^"]+)",\s*"([^"]+)",\s*([-0-9.]+),\s*([-0-9.]+),\s*R\.drawable\.([A-Za-z0-9_]+),\s*\d+,\s*"([A-Z_]+)""""
+                            """ReferencePointEntity\("([^"]+)",\s*"([^"]+)",\s*([-0-9.]+),\s*([-0-9.]+),\s*R\.drawable\.([A-Za-z0-9_]+),\s*\d+,\s*"([A-Z_]+)"(?:,\s*"?([A-Za-z0-9_]+)"?\s*,\s*([0-9]+))?"""
                     )
 
+            // mapping from short building token in raw file to actual building id
+            val buildingTokenToId = mapOf("A" to "SE", "B" to "SEB", "C" to "SEC")
+
             val imported = mutableListOf<ReferencePointEntity>()
-            val resId = R.raw.reference_points_stairs_output
-            context.resources.openRawResource(resId).bufferedReader().useLines { lines ->
-                lines.forEach { line ->
-                    val m = pattern.find(line) ?: return@forEach
-                    val (id, name, xStr, yStr, imageName, type) = m.destructured
-                    if (type != "STAIRS") return@forEach
 
-                    val buildingFloor = allowedImageToBuildingFloor[imageName] ?: return@forEach
-                    val (buildingId, floorNumber) = buildingFloor
+            for (resId in rawResList) {
+                try {
+                    context.resources.openRawResource(resId).bufferedReader().useLines { lines ->
+                                                lines.forEach { line ->
+                                                        val m = pattern.find(line) ?: return@forEach
+                                                        val (id, name, xStr, yStr, drawableToken, type, buildingTokenRaw, floorTokenRaw) = m.destructured
 
-                    val imageId =
-                            context.resources.getIdentifier(
-                                    imageName,
-                                    "drawable",
-                                    context.packageName
-                            )
-                    if (imageId == 0) return@forEach
+                                                        // 只處理特定類型
+                                                        if (!(type == "STAIRS" || type == "CLASSROOM" || type == "ENTRANCE" || type == "ELEVATOR")) {
+                                                                Log.d("IndoorMap.DB", "importStairsPointsFromRaw: skipping type=$type for id=$id")
+                                                                return@forEach
+                                                        }
 
-                    val floorEntity =
-                            database.floorDao().getFloorByBuildingAndNumber(buildingId, floorNumber)
-                                    ?: return@forEach
+                                                        // 嘗試解析 drawableToken 為數字或名稱
+                                                        val numeric = drawableToken.toIntOrNull()
+                                                        var imageId = numeric ?: context.resources.getIdentifier(drawableToken, "drawable", context.packageName)
 
-                    imported +=
-                            ReferencePointEntity(
-                                    id = id,
-                                    name = name,
-                                    x = xStr.toDoubleOrNull() ?: return@forEach,
-                                    y = yStr.toDoubleOrNull() ?: return@forEach,
-                                    imageId = imageId,
-                                    scanCount = 0,
-                                    type = "STAIRS",
-                                    buildingId = buildingId,
-                                    floorId = floorEntity.id,
-                                    isUserDefined = false
-                            )
+                                                        var imageNameResolved = try {
+                                                                if (imageId != 0) context.resources.getResourceEntryName(imageId) else drawableToken
+                                                        } catch (_: Exception) {
+                                                                drawableToken
+                                                        }
+
+                                                        // 先嘗試用 imageNameResolved 對應 mapping
+                                                        var buildingFloor = allowedImageToBuildingFloor[imageNameResolved]
+
+                                                        // 若 mapping 不存在，嘗試使用 raw 行內的 building/floor token
+                                                        var derivedBuildingId: String? = null
+                                                        var derivedFloorNumber: Int? = null
+                                                        if (buildingFloor == null) {
+                                                                val bTok = buildingTokenRaw.ifBlank { null }
+                                                                val fTok = floorTokenRaw.ifBlank { null }
+                                                                if (bTok != null) {
+                                                                        derivedBuildingId = buildingTokenToId[bTok] ?: bTok
+                                                                }
+                                                                if (fTok != null) {
+                                                                        val parsed = fTok.toIntOrNull()
+                                                                        if (parsed != null) {
+                                                                                // 規一化：11/21/31 -> 1，使用 %10 作簡單規則
+                                                                                derivedFloorNumber = if (parsed >= 10) parsed % 10 else parsed
+                                                                        }
+                                                                }
+                                                                if (derivedBuildingId != null && derivedFloorNumber != null) {
+                                                                        buildingFloor = derivedBuildingId to derivedFloorNumber
+                                                                }
+                                                        }
+
+                                                        // 若 imageId 為 0，嘗試用 imageNameResolved 重新取得
+                                                        if (imageId == 0) {
+                                                                imageId = context.resources.getIdentifier(imageNameResolved, "drawable", context.packageName)
+                                                        }
+
+                                                        // 若仍無 mapping，可記錄並跳過
+                                                        if (buildingFloor == null) {
+                                                                Log.d(
+                                                                                "IndoorMap.DB",
+                                                                                "importStairsPointsFromRaw: no mapping for line id=$id name=$name drawable=$drawableToken resolvedName=$imageNameResolved buildingTok=$buildingTokenRaw floorTok=$floorTokenRaw - skipping"
+                                                                )
+                                                                return@forEach
+                                                        }
+
+                                                        val (buildingId, floorNumber) = buildingFloor
+
+                                                        var floorEntity = database.floorDao().getFloorByBuildingAndNumber(buildingId, floorNumber)
+                                                        if (floorEntity == null) {
+                                                                // 嘗試使用該建築的 entranceFloorId 作為 fallback
+                                                                try {
+                                                                        val buildingEntity = database.buildingDao().getBuildingById(buildingId)
+                                                                        if (buildingEntity != null) {
+                                                                                val fallbackFloor = buildingEntity.entranceFloorId
+                                                                                floorEntity = database.floorDao().getFloorByBuildingAndNumber(buildingId, fallbackFloor)
+                                                                                if (floorEntity != null) {
+                                                                                        Log.d("IndoorMap.DB", "importStairsPointsFromRaw: using building.entranceFloorId=$fallbackFloor for building=$buildingId (line id=$id)")
+                                                                                }
+                                                                        }
+                                                                } catch (_: Exception) {
+                                                                }
+                                                        }
+                                                        if (floorEntity == null) {
+                                                                Log.d("IndoorMap.DB", "importStairsPointsFromRaw: no floor entity for building=$buildingId floorNumber=$floorNumber (line id=$id) - skipping")
+                                                                return@forEach
+                                                        }
+
+                                                        val x = xStr.toDoubleOrNull()
+                                                        val y = yStr.toDoubleOrNull()
+                                                        if (x == null || y == null) {
+                                                                Log.d("IndoorMap.DB", "importStairsPointsFromRaw: invalid coords for id=$id x=$xStr y=$yStr - skipping")
+                                                                return@forEach
+                                                        }
+
+                                                        // 若 imageId 為 0，改用該樓層的 imageId 作為 fallback（避免後續 UI 取名失敗）
+                                                        if (imageId == 0) {
+                                                                try {
+                                                                        imageId = floorEntity.imageId
+                                                                        imageNameResolved = if (imageId != 0) context.resources.getResourceEntryName(imageId) else imageNameResolved
+                                                                } catch (_: Exception) {
+                                                                }
+                                                        }
+
+                                                        // log successful parse for this line
+                                                        Log.d(
+                                                                        "IndoorMap.DB",
+                                                                        "importStairsPointsFromRaw: parsed id=$id name=$name drawable=$drawableToken resolvedName=$imageNameResolved imageId=$imageId type=$type building=$buildingId floorNumber=$floorNumber floorEntityId=${floorEntity.id}"
+                                                        )
+
+                                                        imported += ReferencePointEntity(
+                                                                        id = id,
+                                                                        name = name,
+                                                                        x = x,
+                                                                        y = y,
+                                                                        imageId = imageId,
+                                                                        scanCount = 0,
+                                                                        type = type,
+                                                                        buildingId = buildingId,
+                                                                        floorId = floorEntity.id,
+                                                                        isUserDefined = false
+                                                        )
+                                                }
+                    }
+                } catch (ex: Exception) {
+                    // 若某個 raw resource 不存在或解析失敗，紀錄 log 並繼續處理其他檔案
+                    try {
+                        Log.d("IndoorMap.DB", "importStairsPointsFromRaw: failed to read resId=$resId -> ${ex.message}")
+                    } catch (_: Exception) {
+                    }
                 }
             }
 
             if (imported.isNotEmpty()) {
                 database.referencePointDao().insertAllReferencePoints(imported)
             }
-        }
-
-        // 保留：原本的預設教室資料方法，但不再呼叫
-        private fun getDefaultClassroomPoints(): List<ReferencePointEntity> {
-            // 將所有教室資料轉換為實體
-            return listOf(
-                    // 1樓教室
-                    ReferencePointEntity(
-                            "classroom_sec112",
-                            "sec112",
-                            31.297901153564453,
-                            83.31011199951172,
-                            R.drawable.se1,
-                            0,
-                            "CLASSROOM",
-                            "SE",
-                            1
-                    ),
-                    ReferencePointEntity(
-                            "classroom_sec111f",
-                            "sec111f",
-                            42.17558670043945,
-                            82.67748260498047,
-                            R.drawable.se1,
-                            0,
-                            "CLASSROOM",
-                            "SE",
-                            1
-                    ),
-                    ReferencePointEntity(
-                            "classroom_sec111b",
-                            "sec111b",
-                            43.05496597290039,
-                            88.41331481933594,
-                            R.drawable.se1,
-                            0,
-                            "CLASSROOM",
-                            "SE",
-                            1
-                    ),
-                    ReferencePointEntity(
-                            "classroom_sec110f",
-                            "sec110f",
-                            47.11360168457031,
-                            81.99949645996094,
-                            R.drawable.se1,
-                            0,
-                            "CLASSROOM",
-                            "SE",
-                            1
-                    ),
-                    ReferencePointEntity(
-                            "classroom_sec101",
-                            "sec101",
-                            53.858638763427734,
-                            79.76398468017578,
-                            R.drawable.se1,
-                            0,
-                            "CLASSROOM",
-                            "SE",
-                            1
-                    ),
-                    ReferencePointEntity(
-                            "classroom_sec110b",
-                            "sec110b",
-                            55.860633850097656,
-                            81.97007751464844,
-                            R.drawable.se1,
-                            0,
-                            "CLASSROOM",
-                            "SE",
-                            1
-                    ),
-                    ReferencePointEntity(
-                            "classroom_sec109",
-                            "sec109",
-                            57.482391357421875,
-                            81.64453125,
-                            R.drawable.se1,
-                            0,
-                            "CLASSROOM",
-                            "SE",
-                            1
-                    ),
-                    ReferencePointEntity(
-                            "classroom_sec102f",
-                            "sec102f",
-                            56.883663177490234,
-                            79.9090805053711,
-                            R.drawable.se1,
-                            0,
-                            "CLASSROOM",
-                            "SE",
-                            1
-                    ),
-                    ReferencePointEntity(
-                            "classroom_sec108",
-                            "sec108",
-                            60.943782806396484,
-                            81.4974594116211,
-                            R.drawable.se1,
-                            0,
-                            "CLASSROOM",
-                            "SE",
-                            1
-                    ),
-                    ReferencePointEntity(
-                            "classroom_sec102b",
-                            "sec102b",
-                            63.0668830871582,
-                            79.71481323242188,
-                            R.drawable.se1,
-                            0,
-                            "CLASSROOM",
-                            "SE",
-                            1
-                    ),
-                    // ... 可以繼續添加更多教室資料
-
-                    // 走廊與設施點位
-                    ReferencePointEntity(
-                            "corridor_1f_north",
-                            "1F-走廊-北",
-                            36.5,
-                            30.0,
-                            R.drawable.se1,
-                            0,
-                            "CORRIDOR",
-                            "SE",
-                            1
-                    ),
-                    ReferencePointEntity(
-                            "corridor_1f_center",
-                            "1F-走廊-中",
-                            50.0,
-                            50.0,
-                            R.drawable.se1,
-                            0,
-                            "CORRIDOR",
-                            "SE",
-                            1
-                    ),
-                    ReferencePointEntity(
-                            "corridor_1f_south",
-                            "1F-走廊-南",
-                            65.0,
-                            72.0,
-                            R.drawable.se1,
-                            0,
-                            "CORRIDOR",
-                            "SE",
-                            1
-                    ),
-                    ReferencePointEntity(
-                            "stairs_1f_1",
-                            "1F-樓梯-1",
-                            40.0,
-                            35.0,
-                            R.drawable.se1,
-                            0,
-                            "STAIRS",
-                            "SE",
-                            1
-                    ),
-                    ReferencePointEntity(
-                            "elevator_1f",
-                            "1F-電梯",
-                            60.0,
-                            35.0,
-                            R.drawable.se1,
-                            0,
-                            "ELEVATOR",
-                            "SE",
-                            1
-                    ),
-                    ReferencePointEntity(
-                            "toilet_1f_male",
-                            "1F-廁所-男",
-                            30.0,
-                            40.0,
-                            R.drawable.se1,
-                            0,
-                            "TOILET",
-                            "SE",
-                            1
-                    ),
-                    ReferencePointEntity(
-                            "toilet_1f_female",
-                            "1F-廁所-女",
-                            30.0,
-                            60.0,
-                            R.drawable.se1,
-                            0,
-                            "TOILET",
-                            "SE",
-                            1
-                    )
-            )
-        }
-
-        private fun getDefaultCorridorVectors(): List<CorridorVectorEntity> {
-            return listOf(
-                    CorridorVectorEntity(
-                            "corridor_1f_main",
-                            "SE",
-                            1,
-                            20.0,
-                            50.0,
-                            80.0,
-                            50.0,
-                            "1樓主走廊"
-                    ),
-                    CorridorVectorEntity(
-                            "corridor_1f_vertical",
-                            "SE",
-                            1,
-                            50.0,
-                            30.0,
-                            50.0,
-                            70.0,
-                            "1樓垂直走廊"
-                    ),
-                    CorridorVectorEntity(
-                            "corridor_2f_main",
-                            "SE",
-                            2,
-                            20.0,
-                            50.0,
-                            80.0,
-                            50.0,
-                            "2樓主走廊"
-                    ),
-                    CorridorVectorEntity(
-                            "corridor_3f_main",
-                            "SE",
-                            3,
-                            20.0,
-                            50.0,
-                            80.0,
-                            50.0,
-                            "3樓主走廊"
-                    ),
-                    CorridorVectorEntity(
-                            "corridor_4f_main",
-                            "SE",
-                            4,
-                            20.0,
-                            50.0,
-                            80.0,
-                            50.0,
-                            "4樓主走廊"
-                    ),
-                    CorridorVectorEntity(
-                            "corridor_5f_main",
-                            "SE",
-                            5,
-                            20.0,
-                            50.0,
-                            80.0,
-                            50.0,
-                            "5樓主走廊"
-                    )
-            )
         }
 
         private fun getDefaultAreas(): List<AreaConnectivityEntity> {

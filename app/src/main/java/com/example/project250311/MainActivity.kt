@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -22,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -36,6 +38,7 @@ import com.example.project250311.Data.AnnouncementViewModel
 import com.example.project250311.Data.AppDatabase
 import com.example.project250311.Data.CourseRepository
 import com.example.project250311.Data.CourseViewModel
+import com.example.project250311.Map.IndoorMap.Database.IndoorMapDatabase
 import com.example.project250311.Map.IndoorMap.IndoorMapScreen
 import com.example.project250311.Map.MapScreen
 import com.example.project250311.Onboarding.*
@@ -55,6 +58,8 @@ import com.example.project250311.Map.IndoorMap.LocationViewModel
 import com.example.project250311.Game.QrcodeScreen
 import com.example.project250311.Game.CollectScreen
 import com.example.project250311.Game.PassportScreen
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val courseViewModel: CourseViewModel by viewModels {
@@ -80,7 +85,20 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         createNotificationChannel(this)
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // 取得資料庫實體
+                val db = IndoorMapDatabase.getDatabase(applicationContext)
 
+                // 呼叫一個簡單的查詢，強迫 Room 觸發 onCreate/onOpen 的 Callback
+                // 注意：請確保您的 ReferencePointDao 裡面有 countPoints() 這個函式
+                val count = db.referencePointDao().countPoints()
+
+                Log.d("MapDebug", "資料庫預熱完成，目前共有 $count 個點")
+            } catch (e: Exception) {
+                Log.e("MapDebug", "❌ 資料庫預熱失敗: ${e.message}")
+            }
+        }
         setContent {
             Project250311Theme {
                 // 檢查是否完成導覽
@@ -525,12 +543,13 @@ fun AppNavHost(
         // 編輯筆記（帶參數的路由）
         composable(
             route = "note_edit_with_id/{noteId}",
-            arguments = listOf(
-                navArgument("noteId") {
-                    type = NavType.IntType
-                    defaultValue = -1
-                }
-            )
+            arguments =
+                listOf(
+                     navArgument("noteId") {
+                        type = NavType.IntType
+                        defaultValue = -1
+                    }
+                )
         ) { backStackEntry ->
             val noteId = backStackEntry.arguments?.getInt("noteId") ?: -1
             val actualNoteId = if (noteId == -1) null else noteId
