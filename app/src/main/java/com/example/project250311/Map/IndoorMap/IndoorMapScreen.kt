@@ -1168,7 +1168,6 @@ fun IndoorMapScreen(
 
                                     // 畫紅色箭頭 (或是白色，視您的路徑顏色而定)
                                     // 這裡使用紅色讓它在藍/黃色路徑上更顯眼
-                                    val arrowColor = R.color.blue1
 
                                     val arrowPath = Path().apply {
                                         moveTo(ax, ay) // 箭頭尖端
