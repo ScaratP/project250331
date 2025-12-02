@@ -32,16 +32,11 @@ fun GameMissionScreen(
     val context = LocalContext.current
     val userId = remember { GameManager.getUserId(context) }
 
-    // --- 新增：讀取 SharedPreferences 判斷是否做過前測 ---
     // 使用 SharedPreferences 確保 APP 重啟後不會忘記已經填過
     val prefs = remember { context.getSharedPreferences("game_prefs", Context.MODE_PRIVATE) }
     var isPreSurveyDone by remember {
         mutableStateOf(prefs.getBoolean("pre_survey_done", false))
     }
-
-    // 筆記選課對話框狀態
-    var showCourseSelectionDialog by remember { mutableStateOf(false) }
-    val allCourses by courseViewModel.allCourses.observeAsState(emptyList())
 
     val missions by gameViewModel.missions.collectAsState()
 
@@ -163,13 +158,7 @@ fun GameMissionScreen(
 
                                     when (mission.id) {
                                         "3" -> {
-                                            // 定位任務：跳轉到地圖 (帶參數告知是遊戲模式)
-                                            // 注意：這部分需要在 MapScreen 裡處理參數，或者單純跳轉
                                             navController.navigate("map_game")
-
-                                            // 定位任務通常要真的掃描到才算完成，這裡先不自動打勾
-                                            // 如果你想簡單測試，可以把下面這行打開：
-                                            // markMissionAsComplete(missions, "4")
                                         }
 
                                         else -> {

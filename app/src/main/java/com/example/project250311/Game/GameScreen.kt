@@ -40,6 +40,7 @@ import com.example.project250311.Game.GameManager
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.filled.*
 import android.app.Application
+import androidx.compose.ui.text.style.TextAlign
 import androidx.lifecycle.AndroidViewModel
 
 fun getMapDrawableResId(groupName: String): Int {
@@ -109,9 +110,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     // (★) 定義集點資料 (建議之後可以移到 Repository 或從 JSON 讀取)
     private val _checkpoints = MutableStateFlow<List<CheckpointInfo>>(
         listOf(
-            CheckpointInfo("sec511", "SEC511", "sec5", 28.41f, 59.07f, "https://youtu.be/dQw4w9WgXcQ?si=8uheMBlcYW7DmOa-", stampImageRes = R.drawable.sec511),
-            CheckpointInfo("sec41", "SEC304 教室", "se3", 22.73f, 21.12f, "", stampImageRes = R.drawable.sec5),
-            CheckpointInfo("seb106", "SEB106", "se1", 66.1337f, 48.3315f, "", stampImageRes = R.drawable.seb106),
+            CheckpointInfo("sec511", "SEC511", "sec5", 28.41f, 59.07f, "", stampImageRes = R.drawable.sec511),
+            CheckpointInfo("sec409", "僑僑的辦公室", "sec4", 65.48392f, 63.98371f, "", stampImageRes = R.drawable.sec5),
+            CheckpointInfo("seb108", "SEB108", "se1", 45.549102f, 64.25264f, "https://youtu.be/dQw4w9WgXcQ?si=8uheMBlcYW7DmOa-", stampImageRes = R.drawable.seb106),
         )
     )
 
@@ -147,6 +148,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _currentMapCheckpoints = MutableStateFlow<List<CheckpointInfo>>(emptyList())
     val currentMapCheckpoints: StateFlow<List<CheckpointInfo>> = _currentMapCheckpoints.asStateFlow()
+
+    private val _isLikelyIndoors = MutableStateFlow(false)
+    val isLikelyIndoors: StateFlow<Boolean> = _isLikelyIndoors.asStateFlow()
 
     // (★) 觸發距離設為 15 公尺 (比較合理，100公尺有點太遠容易誤判)
     private val TRIGGER_DISTANCE_METERS = 15.0f
@@ -204,20 +208,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = checkpoints.map { checkpoint ->
             val progress = _progress.getOrPut(checkpoint.id) { StampProgress(checkpoint.id) }
 
-            // 計算距離 (簡單的歐幾里得距離估算，僅供參考)
-            // 注意：百分比距離轉公尺需要地圖比例尺，這裡先用百分比差異作為 "相對距離"
-            // 實務上建議：如果兩點在同一張圖，直接算百分比距離，若 < 5% 則視為接近
+
             val distance = if (currentMapGroup == checkpoint.targetMapGroup && currentPercentage != null) {
                 val dx = currentPercentage.x - checkpoint.targetPercentageX
                 val dy = currentPercentage.y - checkpoint.targetPercentageY
-                // 假設地圖寬度約 50米 (這只是估算，用於顯示 UI)
+
                 sqrt(dx * dx + dy * dy) // 這是百分比距離
             } else {
                 Float.MAX_VALUE
             }
 
-            // (★) 判定邏輯修正：使用百分比距離閾值 (例如 10%)
-            // 假設地圖長寬 100單位，距離 10單位約為有效範圍
             val isSameMap = (currentMapGroup == checkpoint.targetMapGroup)
 
             val status = when {
@@ -338,6 +338,7 @@ fun GameScreen(
     val currentMapGroup by viewModel.currentMapGroup.collectAsState()
     val currentPercentage by viewModel.currentPercentage.collectAsState()
     val currentMapCheckpoints by viewModel.currentMapCheckpoints.collectAsState()
+    val isLikelyIndoors by viewModel.isLikelyIndoors.collectAsState()
 
     val context = LocalContext.current
     val primaryColor = MaterialTheme.colorScheme.primary
@@ -380,30 +381,49 @@ fun GameScreen(
                 shape = MaterialTheme.shapes.medium
             ) {
                 if (currentMapGroup != null) {
-                    val mapImageRes = getMapDrawableResId(currentMapGroup!!)
-                    val checkpointPoints = remember(currentMapCheckpoints) {
-                        currentMapCheckpoints.map { PointF(it.targetPercentageX, it.targetPercentageY) }
-                    }
-
-                    AndroidView(
-                        modifier = Modifier.fillMaxSize(),
-                        factory = { ctx ->
-                            IndoorLocationView(ctx).apply {
-                                maxZoom = 10f
-                                minZoom = 1f // 鎖定最小縮放
+                    if (isLikelyIndoors){
+                        val mapImageRes = getMapDrawableResId(currentMapGroup!!)
+                        val checkpointPoints = remember(currentMapCheckpoints) {
+                            currentMapCheckpoints.map {
+                                PointF(
+                                    it.targetPercentageX,
+                                    it.targetPercentageY
+                                )
                             }
-                        },
-                        update = { view ->
-                            view.setImageResource(mapImageRes)
-                            view.predictedPercentage = currentPercentage
-                            view.checkpointLocations = checkpointPoints
-                            view.setLocationColors(
-                                primaryColor = primaryColor.toArgb(),
-                                accuracyColor = accuracyColor.toArgb(),
-                                centerColor = android.graphics.Color.WHITE
-                            )
                         }
-                    )
+
+                        AndroidView(
+                            modifier = Modifier.fillMaxSize(),
+                            factory = { ctx ->
+                                IndoorLocationView(ctx).apply {
+                                    maxZoom = 10f
+                                    minZoom = 1f // 鎖定最小縮放
+                                }
+                            },
+                            update = { view ->
+                                view.setImageResource(mapImageRes)
+                                view.predictedPercentage = currentPercentage
+                                view.checkpointLocations = checkpointPoints
+                                view.setLocationColors(
+                                    primaryColor = primaryColor.toArgb(),
+                                    accuracyColor = accuracyColor.toArgb(),
+                                    centerColor = android.graphics.Color.WHITE
+                                )
+                            }
+                        )
+                    }else{
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "現在好像不在理工學院內\n或是需要打開更多權限\n設定➡️定位服務➡️模式\n選擇高精確度（GPS+Wi-Fi+行動網路）",
+                                    color = Color.Gray,
+                                    textAlign = TextAlign.Center
+
+                                )
+
+                            }
+                        }
+                    }
                 } else {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
