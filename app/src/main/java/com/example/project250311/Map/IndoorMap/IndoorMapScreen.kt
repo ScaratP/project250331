@@ -43,7 +43,17 @@ import kotlin.math.min
 import kotlinx.coroutines.*
 import android.util.Log
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.PI
+import kotlin.math.sqrt
+import kotlin.math.hypot
 
 
 // ======================= 主畫面 =======================
@@ -977,6 +987,18 @@ fun IndoorMapScreen(
                 .onSizeChanged {
                     containerWidthPx = it.width.toFloat(); containerHeightPx = it.height.toFloat()
                 }) {
+                    // 定義文字畫筆 (紅色字體 + 白色陰影)
+                    val textPaint = remember {
+                        android.graphics.Paint().apply {
+                            color = android.graphics.Color.RED
+                            textSize = 40f // 字體大小，可依需求調整
+                            isAntiAlias = true
+                            textAlign = android.graphics.Paint.Align.CENTER
+                            typeface = android.graphics.Typeface.DEFAULT_BOLD
+                            // 設定陰影 (半徑, dx, dy, 顏色) - 讓文字在複雜背景上更清楚
+                            setShadowLayer(3f, 0f, 0f, android.graphics.Color.WHITE)
+                        }
+                    }
             imageBitmap?.let { bmp ->
                 Box(
                     Modifier.fillMaxSize()
@@ -1088,42 +1110,114 @@ fun IndoorMapScreen(
 
                         // 可視樣式大小（可依需求微調）
                         val classroomRadius = 10f
-                        val startGoalRadius = 14f
-                        val pathWidth = 8f
+                        val startGoalRadius = 16f
+                        val pathWidth = 12f // 路徑稍微加粗一點
 
-                        // 起訖點（將影像座標轉螢幕座標後繪製）
-                        start?.let {
-                            val s = imgToScreen(it)
-                            drawCircle(
-                                color = colorMaterial.primary,
-                                radius = startGoalRadius,
-                                center = s
-                            )
-                        }
-                        goal?.let {
-                            val g2 = imgToScreen(it)
-                            drawCircle(
-                                color = colorMaterial.tertiary,
-                                radius = startGoalRadius,
-                                center = g2
-                            )
-                        }
-
-                        // 路徑（逐點轉換成螢幕座標繪製）
+                        // === 1. 繪製路徑與連續箭頭 ===
                         if (path.isNotEmpty()) {
-                            val p =
-                                Path().apply {
-                                    val first = imgToScreen(path.first())
-                                    moveTo(first.x, first.y)
-                                    for (i in 1 until path.size) {
-                                        val sp = imgToScreen(path[i])
-                                        lineTo(sp.x, sp.y)
-                                    }
+                            // 先將所有點轉換為螢幕座標
+                            val screenPoints = path.map { imgToScreen(it) }
+
+                            // A. 畫路徑底線
+                            val p = Path().apply {
+                                moveTo(screenPoints.first().x, screenPoints.first().y)
+                                for (i in 1 until screenPoints.size) {
+                                    lineTo(screenPoints[i].x, screenPoints[i].y)
                                 }
+                            }
+
+                            // 畫主線條 (使用 secondary 顏色，或是您想要的顏色)
                             drawPath(
                                 path = p,
-                                color = colorMaterial.secondary,
-                                style = Stroke(width = pathWidth)
+                                color = Color.LightGray,
+                                style = Stroke(
+                                    width = pathWidth,
+                                    cap = StrokeCap.Round,
+                                    join = StrokeJoin.Round
+                                )
+                            )
+
+                            // B. 畫等距方向箭頭
+                            val arrowSpacing = 80f // 箭頭間距 (您可以依需求調整，例如 60f~100f)
+                            val arrowSize = 25f    // 箭頭大小
+                            var distanceAccumulator = 0f // 累計距離，確保跨線段時箭頭間距均勻
+
+                            for (i in 0 until screenPoints.size - 1) {
+                                val p1 = screenPoints[i]
+                                val p2 = screenPoints[i+1]
+
+                                val dx = p2.x - p1.x
+                                val dy = p2.y - p1.y
+                                val segmentDist = hypot(dx, dy)
+
+                                if (segmentDist == 0f) continue
+
+                                val angle = atan2(dy, dx)
+
+                                // 計算這一點開始的第一個箭頭位置
+                                var currentPos = arrowSpacing - distanceAccumulator
+
+                                while (currentPos <= segmentDist) {
+                                    // 計算箭頭在當前線段上的位置比例 t (0.0 ~ 1.0)
+                                    val t = currentPos / segmentDist
+                                    val ax = p1.x + t * dx
+                                    val ay = p1.y + t * dy
+
+                                    // 計算箭頭兩翼座標
+                                    val wingAngle = 0.5f // 箭頭開合角度 (弧度)
+
+                                    // 畫紅色箭頭 (或是白色，視您的路徑顏色而定)
+                                    // 這裡使用紅色讓它在藍/黃色路徑上更顯眼
+                                    val arrowColor = R.color.blue1
+
+                                    val arrowPath = Path().apply {
+                                        moveTo(ax, ay) // 箭頭尖端
+                                        // 左翼
+                                        lineTo(
+                                            ax - arrowSize * cos(angle - wingAngle),
+                                            ay - arrowSize * sin(angle - wingAngle)
+                                        )
+                                        // 右翼 (這裡用 moveTo 回到尖端再畫，或者直接畫成三角形)
+                                        moveTo(ax, ay)
+                                        lineTo(
+                                            ax - arrowSize * cos(angle + wingAngle),
+                                            ay - arrowSize * sin(angle + wingAngle)
+                                        )
+                                    }
+
+                                    drawPath(
+                                        path = arrowPath,
+                                        color = ComposeColor.Blue,
+                                        style = Stroke(width = 6f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                                    )
+
+                                    // 前進到下一個箭頭位置
+                                    currentPos += arrowSpacing
+                                }
+
+                                // 計算這段線段「剩餘」的距離，留給下一段線段使用
+                                // 這樣箭頭在轉彎處的間距才會準確
+                                distanceAccumulator = (distanceAccumulator + segmentDist) % arrowSpacing
+                            }
+                        }
+
+                        // === 2. 繪製起點 (綠色 + 文字) ===
+                        start?.let {
+                            val s = imgToScreen(it)
+                            drawCircle(color = ComposeColor.Green, radius = startGoalRadius, center = s)
+                            drawCircle(color = ComposeColor.White, radius = startGoalRadius * 0.5f, center = s)
+                            drawContext.canvas.nativeCanvas.drawText(
+                                "起點", s.x, s.y - 30f, textPaint
+                            )
+                        }
+
+                        // === 3. 繪製終點 (紅色 + 文字) ===
+                        goal?.let {
+                            val g2 = imgToScreen(it)
+                            drawCircle(color = ComposeColor.Red, radius = startGoalRadius, center = g2)
+                            drawCircle(color = ComposeColor.White, radius = startGoalRadius * 0.5f, center = g2)
+                            drawContext.canvas.nativeCanvas.drawText(
+                                "終點", g2.x, g2.y - 30f, textPaint
                             )
                         }
 
