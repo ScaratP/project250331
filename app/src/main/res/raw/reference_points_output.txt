@@ -17,7 +17,7 @@ ReferencePointEntity("86f83efa-b49e-4af5-9e5f-a4a7811f1b1c", "sec106", 82.177307
 ReferencePointEntity("789ec331-f272-4241-afd6-d6eb73805012", "sec105", 90.61561584472656, 82.97599792480469, R.drawable.se1, 0, "CLASSROOM", "C", 31),
 ReferencePointEntity("c910e8be-96b8-4e11-9c7c-107266a1c8dc", "seb108f", 44.061641693115234, 70.91503143310547, R.drawable.se1, 0, "CLASSROOM", "B", 21),
 ReferencePointEntity("726f7d80-a955-438e-8403-9bd792bb37a1", "seb108b", 45.549102783203125, 64.25264739990234, R.drawable.se1, 0, "CLASSROOM", "B", 21),
-ReferencePointEntity("11458d93-9490-4e58-8a4b-a230e979c9b1", "seb103", 41.30967712402344, 53.41679382324219, R.drawable.se1, 0, "CLASSROOM", "B", 21),
+ReferencePointEntity("11458d93-9490-4e58-8a4b-a230e979c9b1", "seb103", 41.35967712402344, 53.41679382324219, R.drawable.se1, 0, "CLASSROOM", "B", 21),
 ReferencePointEntity("2ecebedb-cf39-4974-9275-784fd4d3e1a1", "seb107-a", 47.41659927368164, 53.864097595214844, R.drawable.se1, 0, "CLASSROOM", "B", 21),
 ReferencePointEntity("d6686cbf-e3b1-418c-8402-b87e79a19736", "seb104f", 46.36882781982422, 52.11393356323242, R.drawable.se1, 0, "CLASSROOM", "B", 21),
 ReferencePointEntity("91a90228-40ae-4392-b350-aa91cb9267fd", "seb104b", 53.48806381225586, 49.775474548339844, R.drawable.se1, 0, "CLASSROOM", "B", 21),

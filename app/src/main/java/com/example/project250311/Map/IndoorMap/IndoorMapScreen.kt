@@ -55,6 +55,445 @@ import kotlin.math.PI
 import kotlin.math.sqrt
 import kotlin.math.hypot
 
+// 多段式導航資料結構與規劃器
+data class RouteSegment(
+    val floorId: Int,
+    val startTargetName: String,
+    val endTargetName: String,
+    val description: String,
+    val isElevatorNav: Boolean = false
+)
+
+// 解析名稱，回傳 (棟別前綴, 樓層)，例如 "sea504" -> ("sea", 5)
+fun parseLocationInfo(name: String): Pair<String, Int> {
+    val lowerName = name.trim().lowercase()
+    val building = when {
+        lowerName.startsWith("sea") -> "sea"
+        lowerName.startsWith("seb") -> "seb"
+        lowerName.startsWith("sec") -> "sec"
+        else -> ""
+    }
+    val floor = if (lowerName.length >= 4 && lowerName[3].isDigit()) lowerName[3].digitToInt() else 1
+    return Pair(building, floor)
+}
+
+// 單段處理：將 RouteSegment 轉換為實際 start/goal 並切換圖片與觸發路徑
+suspend fun processSegment(
+    segment: RouteSegment,
+    db: IndoorMapDatabase,
+    refDao: com.example.project250311.Map.IndoorMap.Database.ReferencePointDao,
+    scope: CoroutineScope,
+    onUpdate: (Offset?, Offset?, Int) -> Unit,
+    onImageWait: suspend (Int) -> Boolean,
+    getImageBitmap: () -> android.graphics.Bitmap?,
+    waitForGridReady: suspend () -> Unit,
+    triggerPathCalc: () -> Unit
+) {
+    withContext(Dispatchers.IO) {
+        val allPoints = refDao.getAllReferencePoints().first()
+
+        fun matchesName(p: ReferencePointEntity, name: String): Boolean {
+            val t = p.name.trim()
+            val n = name.trim()
+            return t.equals(n, ignoreCase = true) || t.contains(n, ignoreCase = true)
+        }
+
+        // 優先在指定樓層挑選同名點，否則退回不過濾樓層
+        val startCandidatesAll = allPoints.filter { matchesName(it, segment.startTargetName) }
+        val endCandidatesAll = allPoints.filter { matchesName(it, segment.endTargetName) }
+        // 嚴格限制樓層：以 floorNumber 比對，不再退回其他樓層（避免跨樓層座標造成路徑亂跑）
+        val startCandidates = startCandidatesAll.filter {
+            try { db.floorDao().getFloorById(it.floorId)?.floorNumber == segment.floorId } catch (_: Exception) { false }
+        }
+        val endCandidates = endCandidatesAll.filter {
+            try { db.floorDao().getFloorById(it.floorId)?.floorNumber == segment.floorId } catch (_: Exception) { false }
+        }
+
+        if (startCandidates.isEmpty() || endCandidates.isEmpty()) {
+            Log.e("IndoorMap", "processSegment: 找不到起點/終點 start='${segment.startTargetName}' end='${segment.endTargetName}' on floor=${segment.floorId}")
+            return@withContext
+        }
+
+        // 嘗試找出「同一張圖」的配對，避免跨圖片
+        val startImgSet = startCandidates.mapNotNull { it.imageId }.toSet().filter { it != 0 }
+        val endImgSet = endCandidates.mapNotNull { it.imageId }.toSet().filter { it != 0 }
+        val commonImages = startImgSet.intersect(endImgSet)
+
+        // 根據可用性挑選圖與實際點位
+        data class Chosen(val imageRes: Int, val s: ReferencePointEntity, val e: ReferencePointEntity)
+        fun firstExactThenContains(cands: List<ReferencePointEntity>, name: String, imageId: Int? = null): ReferencePointEntity? {
+            val exact = cands.firstOrNull { (imageId == null || it.imageId == imageId) && it.name.trim().equals(name.trim(), ignoreCase = true) }
+            if (exact != null) return exact
+            return cands.firstOrNull { (imageId == null || it.imageId == imageId) && it.name.contains(name.trim(), ignoreCase = true) }
+        }
+
+        // 特別處理：1F 跨棟段落優先固定使用 SE 1F 的整合圖 (se1)
+        val se1ImageId: Int = try {
+            db.floorDao().getFloorByBuildingAndNumber("SE", 1)?.imageId ?: 0
+        } catch (_: Exception) { 0 }
+
+        val chosen: Chosen? = when {
+            segment.floorId == 1 && se1ImageId != 0 -> {
+                val s = firstExactThenContains(startCandidates, segment.startTargetName, se1ImageId)
+                val e = firstExactThenContains(endCandidates, segment.endTargetName, se1ImageId)
+                if (s != null && e != null) Chosen(se1ImageId, s, e) else null
+            }
+            commonImages.isNotEmpty() -> {
+                val img = commonImages.first()
+                val s = firstExactThenContains(startCandidates, segment.startTargetName, img)
+                val e = firstExactThenContains(endCandidates, segment.endTargetName, img)
+                if (s != null && e != null) Chosen(img, s, e) else null
+            }
+            // 若沒有共同圖片，優先使用「終點所在圖片」，嘗試在該圖找到起點同名鏡像點
+            endImgSet.isNotEmpty() -> {
+                val img = endImgSet.first()
+                val e = firstExactThenContains(endCandidates, segment.endTargetName, img)
+                val s = firstExactThenContains(startCandidates, segment.startTargetName, img)
+                if (s != null && e != null) Chosen(img, s, e) else null
+            }
+            // 再退回起點圖片
+            startImgSet.isNotEmpty() -> {
+                val img = startImgSet.first()
+                val s = firstExactThenContains(startCandidates, segment.startTargetName, img)
+                val e = firstExactThenContains(endCandidates, segment.endTargetName, img)
+                if (s != null && e != null) Chosen(img, s, e) else null
+            }
+            else -> null
+        }
+
+        if (chosen == null) {
+            Log.e("IndoorMap", "processSegment: 找不到同圖配對或鏡像點，無法在單張圖上規劃路徑 floor=${segment.floorId} start='${segment.startTargetName}' end='${segment.endTargetName}'")
+            return@withContext
+        }
+
+        // 切換到目標圖片（先清空點以避免前一張圖的點殘留），然後等待圖片與網格
+        withContext(Dispatchers.Main) {
+            onUpdate(null, null, chosen.imageRes)
+        }
+        val isLoaded = onImageWait(chosen.imageRes)
+        if (!isLoaded) return@withContext
+
+        // 等待該樓層圖的網格構建完成
+        waitForGridReady()
+        val bmp = getImageBitmap() ?: return@withContext
+
+        val sPoint = Offset(
+            (chosen.s.x.toFloat() / 100f) * bmp.width,
+            (chosen.s.y.toFloat() / 100f) * bmp.height
+        )
+        val gPoint = Offset(
+            (chosen.e.x.toFloat() / 100f) * bmp.width,
+            (chosen.e.y.toFloat() / 100f) * bmp.height
+        )
+
+        withContext(Dispatchers.Main) {
+            onUpdate(sPoint, gPoint, chosen.imageRes)
+            triggerPathCalc()
+        }
+    }
+}
+
+// 產生多段導航列表（只使用 1F 作為連通層）
+fun planMultiStageRoute(
+    startEntity: ReferencePointEntity,
+    endEntity: ReferencePointEntity,
+    startFloor: Int,
+    endFloor: Int
+): List<RouteSegment> {
+    val segments = mutableListOf<RouteSegment>()
+    val (startBuild, _) = parseLocationInfo(startEntity.name)
+    val (endBuild, _) = parseLocationInfo(endEntity.name)
+
+    // 0) 同一張圖：單段「出發教室 → 目的教室」
+    if (startEntity.imageId != 0 && startEntity.imageId == endEntity.imageId) {
+        segments.add(
+            RouteSegment(
+                floorId = startFloor,
+                startTargetName = startEntity.name,
+                endTargetName = endEntity.name,
+                description = "已到達目的地",
+                isElevatorNav = false
+            )
+        )
+        return segments
+    }
+
+    // 1) 同棟：
+    if (startBuild == endBuild) {
+        if (startFloor == endFloor) {
+            // 同樓層但不同圖，仍直接規劃單段（資料允許時）
+            segments.add(
+                RouteSegment(
+                    floorId = startFloor,
+                    startTargetName = startEntity.name,
+                    endTargetName = endEntity.name,
+                    description = "已到達目的地"
+                )
+            )
+        } else {
+            // 「出發教室 → 本樓層電梯」→「目的樓層電梯 → 教室」
+            segments.add(
+                RouteSegment(
+                    floorId = startFloor,
+                    startTargetName = startEntity.name,
+                    endTargetName = "${startBuild}${startFloor}電梯",
+                    description = "已到達電梯",
+                    isElevatorNav = true
+                )
+            )
+            segments.add(
+                RouteSegment(
+                    floorId = endFloor,
+                    startTargetName = "${endBuild}${endFloor}電梯",
+                    endTargetName = endEntity.name,
+                    description = "已到達目的地"
+                )
+            )
+        }
+        return segments
+    }
+
+    // 2) 不同棟：
+    when {
+        // 起點在 1F、終點不在 1F: 「出發教室 → 目的棟 1F 電梯」，之後「目的樓層電梯 → 教室」
+        startFloor == 1 && endFloor != 1 -> {
+            segments.add(
+                RouteSegment(
+                    floorId = 1,
+                    startTargetName = startEntity.name,
+                    endTargetName = "${endBuild}1電梯",
+                    description = "已到達目的棟電梯",
+                    isElevatorNav = true
+                )
+            )
+            segments.add(
+                RouteSegment(
+                    floorId = endFloor,
+                    startTargetName = "${endBuild}${endFloor}電梯",
+                    endTargetName = endEntity.name,
+                    description = "已到達目的地"
+                )
+            )
+        }
+        // 起點不在 1F、終點在 1F: 「出發教室 → 本樓層電梯」→「出發棟 1F 電梯 → 目的教室」
+        startFloor != 1 && endFloor == 1 -> {
+            segments.add(
+                RouteSegment(
+                    floorId = startFloor,
+                    startTargetName = startEntity.name,
+                    endTargetName = "${startBuild}${startFloor}電梯",
+                    description = "已到達電梯 (前往 1 樓)",
+                    isElevatorNav = true
+                )
+            )
+            segments.add(
+                RouteSegment(
+                    floorId = 1,
+                    startTargetName = "${startBuild}1電梯",
+                    endTargetName = endEntity.name,
+                    description = "已到達目的地"
+                )
+            )
+        }
+        // 起點不在 1F、終點不在 1F: 「出發教室 → 本樓層電梯」→「1F 跨棟到目的棟 1F 電梯」→「目的樓層電梯 → 教室」
+        startFloor != 1 && endFloor != 1 -> {
+            segments.add(
+                RouteSegment(
+                    floorId = startFloor,
+                    startTargetName = startEntity.name,
+                    endTargetName = "${startBuild}${startFloor}電梯",
+                    description = "已到達電梯 (前往 1 樓)",
+                    isElevatorNav = true
+                )
+            )
+            segments.add(
+                RouteSegment(
+                    floorId = 1,
+                    startTargetName = "${startBuild}1電梯",
+                    endTargetName = "${endBuild}1電梯",
+                    description = "已到達目的棟電梯 (前往 ${endFloor} 樓)",
+                    isElevatorNav = true
+                )
+            )
+            segments.add(
+                RouteSegment(
+                    floorId = endFloor,
+                    startTargetName = "${endBuild}${endFloor}電梯",
+                    endTargetName = endEntity.name,
+                    description = "已到達目的地"
+                )
+            )
+        }
+        // 其他未涵蓋情形（例如兩者皆在 1F 但不同圖），預設嘗試單段
+        else -> {
+            segments.add(
+                RouteSegment(
+                    floorId = 1,
+                    startTargetName = startEntity.name,
+                    endTargetName = endEntity.name,
+                    description = "已到達目的地"
+                )
+            )
+        }
+    }
+
+    return segments
+}
+
+// ENTRANCE → 教室 規劃器（沿用相同規則，將「出發教室」替換為「入口點」）
+fun planEntranceToClassroomRoute(
+    startEntrance: ReferencePointEntity,
+    endEntity: ReferencePointEntity,
+    startFloor: Int,
+    endFloor: Int
+): List<RouteSegment> {
+    val segments = mutableListOf<RouteSegment>()
+    val startBuild = when (startEntrance.buildingId?.uppercase()) {
+        "SEB" -> "seb"
+        "SEC" -> "sec"
+        else -> "sea"
+    }
+    val (endBuild, _) = parseLocationInfo(endEntity.name)
+
+    // 同一張圖：入口 → 教室
+    if (startEntrance.imageId != 0 && startEntrance.imageId == endEntity.imageId) {
+        segments.add(
+            RouteSegment(
+                floorId = startFloor,
+                startTargetName = startEntrance.name,
+                endTargetName = endEntity.name,
+                description = "已到達目的地",
+                isElevatorNav = false
+            )
+        )
+        return segments
+    }
+
+    // 同棟
+    if (startBuild == endBuild) {
+        if (startFloor == endFloor) {
+            segments.add(
+                RouteSegment(
+                    floorId = startFloor,
+                    startTargetName = startEntrance.name,
+                    endTargetName = endEntity.name,
+                    description = "已到達目的地",
+                    isElevatorNav = false
+                )
+            )
+        } else {
+            segments.add(
+                RouteSegment(
+                    floorId = startFloor,
+                    startTargetName = startEntrance.name,
+                    endTargetName = "${startBuild}${startFloor}電梯",
+                    description = "已到達電梯",
+                    isElevatorNav = true
+                )
+            )
+            segments.add(
+                RouteSegment(
+                    floorId = endFloor,
+                    startTargetName = "${endBuild}${endFloor}電梯",
+                    endTargetName = endEntity.name,
+                    description = "已到達目的地",
+                    isElevatorNav = false
+                )
+            )
+        }
+        return segments
+    }
+
+    // 不同棟
+    when {
+        // 起點在 1F、終點不在 1F
+        startFloor == 1 && endFloor != 1 -> {
+            segments.add(
+                RouteSegment(
+                    floorId = 1,
+                    startTargetName = startEntrance.name,
+                    endTargetName = "${endBuild}1電梯",
+                    description = "已到達目的棟電梯",
+                    isElevatorNav = true
+                )
+            )
+            segments.add(
+                RouteSegment(
+                    floorId = endFloor,
+                    startTargetName = "${endBuild}${endFloor}電梯",
+                    endTargetName = endEntity.name,
+                    description = "已到達目的地",
+                    isElevatorNav = false
+                )
+            )
+        }
+        // 起點不在 1F、終點在 1F
+        startFloor != 1 && endFloor == 1 -> {
+            segments.add(
+                RouteSegment(
+                    floorId = startFloor,
+                    startTargetName = startEntrance.name,
+                    endTargetName = "${startBuild}${startFloor}電梯",
+                    description = "已到達電梯 (前往 1 樓)",
+                    isElevatorNav = true
+                )
+            )
+            segments.add(
+                RouteSegment(
+                    floorId = 1,
+                    startTargetName = "${startBuild}1電梯",
+                    endTargetName = endEntity.name,
+                    description = "已到達目的地",
+                    isElevatorNav = false
+                )
+            )
+        }
+        // 起點不在 1F、終點不在 1F
+        startFloor != 1 && endFloor != 1 -> {
+            segments.add(
+                RouteSegment(
+                    floorId = startFloor,
+                    startTargetName = startEntrance.name,
+                    endTargetName = "${startBuild}${startFloor}電梯",
+                    description = "已到達電梯 (前往 1 樓)",
+                    isElevatorNav = true
+                )
+            )
+            segments.add(
+                RouteSegment(
+                    floorId = 1,
+                    startTargetName = "${startBuild}1電梯",
+                    endTargetName = "${endBuild}1電梯",
+                    description = "已到達目的棟電梯 (前往 ${endFloor} 樓)",
+                    isElevatorNav = true
+                )
+            )
+            segments.add(
+                RouteSegment(
+                    floorId = endFloor,
+                    startTargetName = "${endBuild}${endFloor}電梯",
+                    endTargetName = endEntity.name,
+                    description = "已到達目的地",
+                    isElevatorNav = false
+                )
+            )
+        }
+        else -> {
+            segments.add(
+                RouteSegment(
+                    floorId = 1,
+                    startTargetName = startEntrance.name,
+                    endTargetName = endEntity.name,
+                    description = "已到達目的地",
+                    isElevatorNav = false
+                )
+            )
+        }
+    }
+
+    return segments
+}
+
 
 // ======================= 主畫面 =======================
 @Composable
@@ -133,6 +572,15 @@ fun IndoorMapScreen(
     // (imageBitmap will be processed by separate effect that depends on container size)
     }
 
+    // ★★★ 關鍵修正：當 imageBitmap 改變（代表圖片載入完成）時，通知邏輯層 ★★★
+    LaunchedEffect(imageBitmap) {
+        if (imageBitmap != null) {
+            // 告知 processSegment 的等待迴圈：圖片已載入完成
+            loadedImageRes = currentImageRes
+            // 保險：不在此處重置 grid；重置已在 LaunchedEffect(currentImageRes, gridSample) 處理
+        }
+    }
+
     // 輔助：限制偏移，避免圖片被平移出畫面
     fun clampOffsets(imageWidth: Float, imageHeight: Float) {
     val dispW = imageWidth * scale
@@ -181,12 +629,7 @@ fun IndoorMapScreen(
     // 單一路徑計算工作，新的請求會取消舊的以避免同時大量配置
     var pathJob by remember { mutableStateOf<Job?>(null) }
 
-    // Debug / telemetry
-    var debugInfo by remember { mutableStateOf("") }
-    var startGridCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
-    var goalGridCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
-    var startWalkable by remember { mutableStateOf<Boolean?>(null) }
-    var goalWalkable by remember { mutableStateOf<Boolean?>(null) }
+
 
     // Overlay 僅在需要顯示時才建立，避免造成不必要的記憶體配置與 GC 壓力
     var overlay by remember { mutableStateOf<ImageBitmap?>(null) }
@@ -198,21 +641,21 @@ fun IndoorMapScreen(
     var showClassrooms by remember { mutableStateOf(false) }
     var classroomPoints by remember { mutableStateOf<List<ReferencePointEntity>>(emptyList()) }
 
-    // Debug: currently resolved entry info (id/name/building/floor) for on-screen verification
-    var resolvedEntranceInfo by remember { mutableStateOf<String?>(null) }
+    // 多段式導航狀態（保留原室外→室內邏輯，不取代）
+    var navigationQueue by remember { mutableStateOf<List<RouteSegment>>(emptyList()) }
+    var currentSegment by remember { mutableStateOf<RouteSegment?>(null) }
+    var showNextStepButton by remember { mutableStateOf(false) }
 
-    // 新增：工具函式（先前使用但未宣告，導致型別推論錯誤）
-    fun screenToImage(p: Offset): Offset? {
-        val bmp = imageBitmap ?: return null
-        val ix = ((p.x - offsetX) / scale)
-        val iy = ((p.y - offsetY) / scale)
-        if (ix < 0 || iy < 0 || ix >= bmp.width || iy >= bmp.height) return null
-        return Offset(ix, iy)
-    }
-    fun imageToGrid(pt: Offset, g: Grid, s: Int): Pair<Int, Int> {
-        val gx = (pt.x / s).toInt()
-        val gy = (pt.y / s).toInt()
-        return gx to gy
+    // （移除入口解析的偵錯資訊）
+
+    fun imageToGrid(pt: Offset, g: Grid, imgW: Int, imgH: Int): Pair<Int, Int> {
+        // Map image-pixel coordinates to grid cells using actual ratios
+        if (imgW <= 0 || imgH <= 0 || g.w <= 0 || g.h <= 0) return 0 to 0
+        val scaleX = g.w.toFloat() / imgW.toFloat()
+        val scaleY = g.h.toFloat() / imgH.toFloat()
+        val gx = (pt.x * scaleX).toInt()
+        val gy = (pt.y * scaleY).toInt()
+        return gx.coerceIn(0, g.w - 1) to gy.coerceIn(0, g.h - 1)
     }
 
     // 讀取 raw 參考點（入口/電梯/樓梯等），僅回傳對應指定 imageRes 的點
@@ -242,8 +685,19 @@ fun IndoorMapScreen(
                     } catch (_: Exception) { drawableToken }
 
                     val matches = imageResName != null && tokenResName.equals(imageResName, true)
-                        if (matches) {
-                            out.add(ReferencePointEntity(id, name, x, y, imageRes, scan, type, buildingId, floorId))
+                    if (matches) {
+                        out.add(
+                            ReferencePointEntity(
+                                id = id,
+                                name = name,
+                                x = x,
+                                y = y,
+                                imageId = imageRes,
+                                type = type,
+                                buildingId = buildingId,
+                                floorId = floorId
+                            )
+                        )
                     }
                 } catch (_: Exception) {}
             }
@@ -251,59 +705,7 @@ fun IndoorMapScreen(
         } catch (_: Exception) { emptyList() }
     }
 
-    // Helper: resolve preferred ENTRANCE reference point
-    fun resolvePreferredEntrance(
-    all: List<ReferencePointEntity>,
-    targetEntity: ReferencePointEntity,
-    entryPointId: String?
-    ): ReferencePointEntity? {
-    // 1) 明確指定入口 id 時，直接採用
-    if (!entryPointId.isNullOrBlank()) {
-        val byId = all.firstOrNull { it.id == entryPointId }
-        if (byId != null) {
-        val imageNameSafe = if (byId.imageId != 0) {
-            try { context.resources.getResourceEntryName(byId.imageId) } catch (_: Exception) { "?" }
-        } else "?"
-        Log.d("IndoorMap.UI", "resolvePreferredEntrance: chosen by id=${byId.id} name=${byId.name} image=$imageNameSafe floorId=${byId.floorId}")
-        return byId
-        }
-    }
-
-    // 2) 依目的地前綴強制對應到固定入口：
-    //    sec* -> SEC 入口； seb* -> SEB 入口； 其他 -> SEA 入口
-    val prefixSource = (targetEntity.id.ifBlank { targetEntity.name }).lowercase()
-    val letters = prefixSource.takeWhile { it.isLetter() }
-    val mappedBuilding = when {
-        letters.startsWith("sec") -> "SEC"
-        letters.startsWith("seb") -> "SEB"
-        else -> "SEA"
-    }
-    val forced = all.firstOrNull { it.type.equals("ENTRANCE", true) && it.buildingId.equals(mappedBuilding, true) }
-    if (forced != null) {
-        Log.d("IndoorMap.UI", "resolvePreferredEntrance: forced by prefix '$letters' -> building=$mappedBuilding id=${forced.id}")
-        return forced
-    }
-
-    // 3) 回退：同建築 -> 指定序列(SEB -> SEA -> SE) -> 任一入口
-    val sameBld = all.firstOrNull { it.type.equals("ENTRANCE", true) && !targetEntity.buildingId.isNullOrBlank() && it.buildingId.equals(targetEntity.buildingId, true) }
-    if (sameBld != null) return sameBld
-
-    val seb = all.firstOrNull { it.type.equals("ENTRANCE", true) && it.buildingId.equals("SEB", true) }
-    if (seb != null) return seb
-    val sea = all.firstOrNull { it.type.equals("ENTRANCE", true) && it.buildingId.equals("SEA", true) }
-    if (sea != null) return sea
-    val se = all.firstOrNull { it.type.equals("ENTRANCE", true) && it.buildingId.equals("SE", true) }
-    if (se != null) return se
-
-    val any = all.firstOrNull { it.type.equals("ENTRANCE", true) }
-    return any
-    }
-
-    // Preview state: when entryPointId is on a different floor than target, we first show entry floor preview
-    var previewEntryPhase by remember { mutableStateOf(false) }
-    var previewEntryEntity by remember { mutableStateOf<ReferencePointEntity?>(null) }
-    var previewTargetEntity by remember { mutableStateOf<ReferencePointEntity?>(null) }
-    var previewTargetFloorName by remember { mutableStateOf<String?>(null) }
+    // 移除入口、預覽相關邏輯（僅保留教室→教室導航）
 
     // 依當前樓層圖片載入/清除教室點（同時包含 STAIRS）
     LaunchedEffect(currentImageRes, showClassrooms) {
@@ -389,8 +791,10 @@ fun IndoorMapScreen(
     val g = grid ?: return
     val sPt = start ?: return
     val ePt = goal ?: return
-    val (sx, sy) = imageToGrid(sPt, g, gridSample)
-    val (gx, gy) = imageToGrid(ePt, g, gridSample)
+    val imgW = imageBitmap?.width ?: return
+    val imgH = imageBitmap?.height ?: return
+    val (sx, sy) = imageToGrid(sPt, g, imgW, imgH)
+    val (gx, gy) = imageToGrid(ePt, g, imgW, imgH)
     // helper: find nearest walkable cell (breadth by radius) - returns Pair<x,y> or null
     fun findNearestWalkable(g: Grid, cx: Int, cy: Int, maxRadius: Int = 30): Pair<Int, Int>? {
         if (g.walkable(cx, cy)) return cx to cy
@@ -417,7 +821,7 @@ fun IndoorMapScreen(
     pathJob?.cancel()
     pathJob = scope.launch(Dispatchers.Default) {
         // Log initial mapping
-        Log.d("IndoorMap.UI", "recomputePathAsync: image->grid start=($sx,$sy) goal=($gx,$gy) grid=${g.w}x${g.h} sample=$gridSample")
+        Log.d("IndoorMap.UI", "recomputePathAsync: image->grid start=($sx,$sy) goal=($gx,$gy) grid=${g.w}x${g.h} img=${imgW}x${imgH} sample=$gridSample")
 
         // If start/goal are not walkable, attempt to find nearest walkable cell and update start/goal
         val startWalk = g.walkable(sx, sy)
@@ -432,11 +836,8 @@ fun IndoorMapScreen(
         if (found != null) {
             sx2 = found.first
             sy2 = found.second
-            Log.d("IndoorMap.UI", "start not walkable at ($sx,$sy) -> nearest walkable=($sx2,$sy2)")
-            // update start Offset on main so UI shows corrected point
-            withContext(Dispatchers.Main) {
-            start = Offset((sx2 + 0.5f) * gridSample, (sy2 + 0.5f) * gridSample)
-            }
+            Log.d("IndoorMap.UI", "start not walkable at ($sx,$sy) -> internal snap to ($sx2,$sy2)")
+            // 不更新 UI start，僅內部採用校正格
         } else {
             Log.d("IndoorMap.UI", "start not walkable and no nearby walkable cell found (maxRadius)")
         }
@@ -447,10 +848,8 @@ fun IndoorMapScreen(
         if (found != null) {
             gx2 = found.first
             gy2 = found.second
-            Log.d("IndoorMap.UI", "goal not walkable at ($gx,$gy) -> nearest walkable=($gx2,$gy2)")
-            withContext(Dispatchers.Main) {
-            goal = Offset((gx2 + 0.5f) * gridSample, (gy2 + 0.5f) * gridSample)
-            }
+            Log.d("IndoorMap.UI", "goal not walkable at ($gx,$gy) -> internal snap to ($gx2,$gy2)")
+            // 不更新 UI goal，僅內部採用校正格
         } else {
             Log.d("IndoorMap.UI", "goal not walkable and no nearby walkable cell found (maxRadius)")
         }
@@ -464,8 +863,10 @@ fun IndoorMapScreen(
         return@launch
         }
         val vis = smoothByVisibility(raw, g)
-        val px = vis.map { node -> Offset((node.x + 0.5f) * gridSample, (node.y + 0.5f) * gridSample) }
-        val simplified = rdp(px, eps = (gridSample * 0.75f))
+        val pixelPerCellX = (imgW.toFloat() / g.w.toFloat())
+        val pixelPerCellY = (imgH.toFloat() / g.h.toFloat())
+        val px = vis.map { node -> Offset((node.x + 0.5f) * pixelPerCellX, (node.y + 0.5f) * pixelPerCellY) }
+        val simplified = rdp(px, eps = (min(pixelPerCellX, pixelPerCellY) * 0.75f))
         withContext(Dispatchers.Main) { path = simplified }
     }
     }
@@ -473,449 +874,297 @@ fun IndoorMapScreen(
     // 影像座標 -> 螢幕座標（用於畫點/路徑時）
     fun imgToScreen(p: Offset) = Offset(p.x * scale + offsetX, p.y * scale + offsetY)
 
-    // 當透過外部參數 (targetPointId) 呼叫時，自動載入目標與入口並計算路徑
-    LaunchedEffect(targetPointId, entryPointId) {
-    if (targetPointId == null) return@LaunchedEffect
-    try {
-        // 取得所有參考點（一次性）
-        val all = withContext(Dispatchers.IO) { refDao.getAllReferencePoints().first() }
-        val targetEntity = all.firstOrNull { it.id == targetPointId }
-        if (targetEntity != null) {
+    // 初始化：僅處理「教室 → 教室」多段式導航
+    LaunchedEffect(targetPointId, entryPointId, autoStart) {
+        if (targetPointId == null) return@LaunchedEffect
         try {
-            val tResName = if (targetEntity.imageId != 0) {
-            try { context.resources.getResourceEntryName(targetEntity.imageId) } catch (_: Exception) { "?" }
-            } else "?"
-            Log.d("IndoorMap.UI", "LaunchedEffect target=${targetEntity.id} floorId=${targetEntity.floorId} image=$tResName")
-        } catch (_: Exception) {}
-        // 不要一開始就自動跳到目標樓層圖片（會導致先顯示目標再跳回入口），
-        // 改為在下面分支中依情況載入對應圖片：若需要 preview 則載入 entry 的圖片，否則載入 target 的圖片。
-        // 接著在各自分支等待 imageBitmap 再做後續計算。
+            // 取得所有參考點（一次性）
+            val all = withContext(Dispatchers.IO) { refDao.getAllReferencePoints().first() }
+            val targetEntity = all.firstOrNull { it.id == targetPointId }
+            if (targetEntity != null) {
+                // 僅在 entryPointId 與 target 皆為教室時啟用
+                val startClassroom = all.firstOrNull { it.id == entryPointId && it.type.equals("CLASSROOM", true) }
+                if (autoStart && startClassroom != null && targetEntity.type.equals("CLASSROOM", true)) {
+                    // 計算樓層號（以 floorNumber 優先）
+                    val startFloor = withContext(Dispatchers.IO) { db.floorDao().getFloorById(startClassroom.floorId)?.floorNumber } ?: startClassroom.floorId
+                    val endFloor = withContext(Dispatchers.IO) { db.floorDao().getFloorById(targetEntity.floorId)?.floorNumber } ?: targetEntity.floorId
 
-        // 找入口：使用共用 helper（會依 entryPointId、同棟 ENTRANCE、SEB、SE、任何 ENTRANCE 依序嘗試）
-        val entryEntity = resolvePreferredEntrance(all, targetEntity, entryPointId)
-        resolvedEntranceInfo = entryEntity?.let { try { "${it.id}/${it.name}/${it.buildingId}/${it.floorId}" } catch (_: Exception) { it.id } }
-
-        // 如果 entryEntity 存在且和目標不在同一樓層，預設進入 entry-preview；
-        // 但若目標在 1F（floorId==1），就直接以 1F 圖導引，略過 preview。
-        if (entryEntity != null && entryEntity.floorId != targetEntity.floorId && targetEntity.floorId != 1) {
-            // set preview vars
-            previewEntryPhase = true
-            previewEntryEntity = entryEntity
-            previewTargetEntity = targetEntity
-            try {
-            val targetFloorEntity = withContext(Dispatchers.IO) { db.floorDao().getFloorById(targetEntity.floorId) }
-            val floorNum = targetFloorEntity?.floorNumber ?: targetEntity.floorId
-            val bld = targetEntity.buildingId?.uppercase().orEmpty()
-            previewTargetFloorName = "$bld${floorNum}樓"
-            } catch (_: Exception) {
-            val bld = targetEntity.buildingId?.uppercase().orEmpty()
-            previewTargetFloorName = "$bld${targetEntity.floorId}樓"
-            }
-
-            // set current image to entry's floor image and wait for bitmap
-            currentImageRes = entryEntity.imageId
-            withContext(Dispatchers.Default) {
-            var attempts2 = 0
-            val wantRes = entryEntity.imageId
-            while (loadedImageRes != wantRes && attempts2 < 100) {
-                attempts2++
-                delay(60)
-            }
-            }
-
-            val bmp2 = imageBitmap?.asAndroidBitmap()
-            if (bmp2 != null) {
-            // find entrance on that floor (use resolved entryEntity explicitly) and the target vertical candidate (STAIRS/ELEVATOR)
-            val floorPointsDb = all.filter { it.imageId == entryEntity.imageId }
-            val floorPointsRaw = loadRawReferencePointsForImage(entryEntity.imageId)
-            val floorPoints = (floorPointsDb + floorPointsRaw).distinctBy { it.id }
-            val entranceOnFloor = entryEntity
-            val verticalAll = floorPoints.filter {
-                it.type.equals("STAIRS", true) ||
-                it.type.equals("ELEVATOR", true) ||
-                it.name.contains("電梯", ignoreCase = true) ||
-                it.name.contains("樓梯", ignoreCase = true) ||
-                it.name.contains("elevator", ignoreCase = true) ||
-                it.name.contains("stair", ignoreCase = true)
-            }
-            val elevatorsOnFloor = verticalAll.filter {
-                it.type.equals("ELEVATOR", true) ||
-                it.name.contains("電梯", ignoreCase = true) ||
-                it.name.contains("elevator", ignoreCase = true)
-            }
-
-            // 新邏輯：
-            // 1F 且目標在 1F：入口 -> 教室
-            // 1F 且目標不在 1F：入口 -> 1F 電梯 (sea1/seb1/sec1)
-            val targetNameLower = targetEntity.name.trim().lowercase()
-            val buildingPrefix = when {
-                targetNameLower.startsWith("sea") -> "sea"
-                targetNameLower.startsWith("seb") -> "seb"
-                targetNameLower.startsWith("sec") -> "sec"
-                else -> ""
-            }
-            val currentFloorId = entryEntity.floorId
-            val isTargetOnCurrentFloor = currentFloorId == targetEntity.floorId
-            var sPoint: Offset? = null
-            var gPoint: Offset? = null
-            if (currentFloorId == 1) {
-                if (isTargetOnCurrentFloor) {
-                // 入口 -> 教室
-                sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
-                gPoint = Offset((targetEntity.x.toFloat() / 100f) * bmp2.width, (targetEntity.y.toFloat() / 100f) * bmp2.height)
-                } else {
-                // 入口 -> 1F 電梯
-                val wantElevatorName = if (buildingPrefix.isNotEmpty()) "${buildingPrefix}1" else ""
-                var targetVertical: ReferencePointEntity? = null
-                if (wantElevatorName.isNotEmpty()) {
-                    targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("ELEVATOR", true) }
-                }
-                if (targetVertical == null && wantElevatorName.isNotEmpty()) {
-                    targetVertical = verticalAll.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("STAIRS", true) }
-                }
-                sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
-                gPoint = targetVertical?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
-                }
-            } else {
-                // 備援：非 1F 入口 -> 1F 電梯
-                val wantElevatorName = if (buildingPrefix.isNotEmpty()) "${buildingPrefix}1" else ""
-                var targetVertical: ReferencePointEntity? = null
-                if (wantElevatorName.isNotEmpty()) {
-                targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("ELEVATOR", true) }
-                }
-                if (targetVertical == null && wantElevatorName.isNotEmpty()) {
-                targetVertical = verticalAll.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("STAIRS", true) }
-                }
-                sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
-                gPoint = targetVertical?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
-            }
-            start = sPoint
-            goal = gPoint
-            // 預覽階段不自動顯示教室點（僅保留使用者手動切換）
-            if (autoStart) recomputePathAsync()
-            }
-            return@LaunchedEffect
-        }
-
-        // 若不需 entry-preview，則載入並等待目標樓層圖片後進行正常導航行為
-        currentImageRes = targetEntity.imageId
-        withContext(Dispatchers.Default) {
-            var attempts = 0
-            val wantRes = targetEntity.imageId
-            while (loadedImageRes != wantRes && attempts < 100) {
-            attempts++
-            delay(60)
-            }
-        }
-
-        val bmp = imageBitmap?.asAndroidBitmap()
-        if (bmp != null) {
-            // 找入口：使用共用 helper（會依 entryPointId、同棟 ENTRANCE、SEB、SE、任何 ENTRANCE 依序嘗試）
-            val entryEntity = resolvePreferredEntrance(all, targetEntity, entryPointId)
-            resolvedEntranceInfo = entryEntity?.let { try { "${it.id}/${it.name}/${it.buildingId}/${it.floorId}" } catch (_: Exception) { it.id } }
-            try {
-            if (entryEntity != null) {
-                val eRes = if (entryEntity.imageId != 0) {
-                try { context.resources.getResourceEntryName(entryEntity.imageId) } catch (_: Exception) { "?" }
-                } else "?"
-                Log.d("IndoorMap.UI", "Resolved entryEntity=${entryEntity.id} floorId=${entryEntity.floorId} image=$eRes name=${entryEntity.name}")
-            } else {
-                Log.d("IndoorMap.UI", "No entryEntity resolved for entryPointId=$entryPointId; falling back to ENTRANCE lookup")
-            }
-            } catch (_: Exception) {}
-
-            // 若 entry 與目標不同樓層，預設進入 preview；但 1F 目標時略過 preview，直接在目標樓層導航。
-            if (entryEntity != null && entryEntity.floorId != targetEntity.floorId && targetEntity.floorId != 1) {
-            // set preview vars
-            previewEntryPhase = true
-            previewEntryEntity = entryEntity
-            previewTargetEntity = targetEntity
-            // try to resolve a human-friendly floor name for button label
-            try {
-                val targetFloorEntity = withContext(Dispatchers.IO) { db.floorDao().getFloorById(targetEntity.floorId) }
-                val floorNum = targetFloorEntity?.floorNumber ?: targetEntity.floorId
-                val bld = targetEntity.buildingId?.uppercase().orEmpty()
-                previewTargetFloorName = "$bld${floorNum}樓"
-            } catch (_: Exception) {
-                val bld = targetEntity.buildingId?.uppercase().orEmpty()
-                previewTargetFloorName = "$bld${targetEntity.floorId}樓"
-            }
-
-            // set current image to entry's floor image
-            currentImageRes = entryEntity.imageId
-
-            // wait for image bitmap for entry floor
-            withContext(Dispatchers.Default) {
-                var attempts2 = 0
-                val wantRes2 = entryEntity.imageId
-                while (loadedImageRes != wantRes2 && attempts2 < 100) {
-                attempts2++
-                delay(60)
-                }
-            }
-
-            val bmp2 = imageBitmap?.asAndroidBitmap()
-            if (bmp2 != null) {
-                // find entrance on that floor (use resolved entryEntity explicitly) and the target vertical candidate (STAIRS/ELEVATOR)
-                val floorPointsDb = all.filter { it.imageId == entryEntity.imageId }
-                val floorPointsRaw = loadRawReferencePointsForImage(entryEntity.imageId)
-                val floorPoints = (floorPointsDb + floorPointsRaw).distinctBy { it.id }
-                val entranceOnFloor = entryEntity
-                val verticalAll = floorPoints.filter {
-                it.type.equals("STAIRS", true) ||
-                it.type.equals("ELEVATOR", true) ||
-                it.name.contains("電梯", ignoreCase = true) ||
-                it.name.contains("樓梯", ignoreCase = true) ||
-                it.name.contains("elevator", ignoreCase = true) ||
-                it.name.contains("stair", ignoreCase = true)
-                }
-                val elevatorsOnFloor = verticalAll.filter {
-                it.type.equals("ELEVATOR", true) ||
-                it.name.contains("電梯", ignoreCase = true) ||
-                it.name.contains("elevator", ignoreCase = true)
-                }
-
-                // 第二預覽分支統一邏輯
-                val targetNameLower = targetEntity.name.trim().lowercase()
-                val buildingPrefix = when {
-                targetNameLower.startsWith("sea") -> "sea"
-                targetNameLower.startsWith("seb") -> "seb"
-                targetNameLower.startsWith("sec") -> "sec"
-                else -> ""
-                }
-                val currentFloorId = entryEntity.floorId
-                val isTargetOnCurrentFloor = currentFloorId == targetEntity.floorId
-                var sPoint: Offset? = null
-                var gPoint: Offset? = null
-                if (currentFloorId == 1) {
-                if (isTargetOnCurrentFloor) {
-                    sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
-                    gPoint = Offset((targetEntity.x.toFloat() / 100f) * bmp2.width, (targetEntity.y.toFloat() / 100f) * bmp2.height)
-                } else {
-                    val wantElevatorName = if (buildingPrefix.isNotEmpty()) "${buildingPrefix}1" else ""
-                    var targetVertical: ReferencePointEntity? = null
-                    if (wantElevatorName.isNotEmpty()) targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("ELEVATOR", true) }
-                    if (targetVertical == null && wantElevatorName.isNotEmpty()) targetVertical = verticalAll.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("STAIRS", true) }
-                    sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
-                    gPoint = targetVertical?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
-                }
-                } else {
-                val wantElevatorName = if (buildingPrefix.isNotEmpty()) "${buildingPrefix}1" else ""
-                var targetVertical: ReferencePointEntity? = null
-                if (wantElevatorName.isNotEmpty()) targetVertical = elevatorsOnFloor.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("ELEVATOR", true) }
-                if (targetVertical == null && wantElevatorName.isNotEmpty()) targetVertical = verticalAll.firstOrNull { it.name.lowercase().contains(wantElevatorName) && it.type.equals("STAIRS", true) }
-                sPoint = entranceOnFloor?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
-                gPoint = targetVertical?.let { Offset((it.x.toFloat() / 100f) * bmp2.width, (it.y.toFloat() / 100f) * bmp2.height) }
-                }
-                start = sPoint
-                goal = gPoint
-                // 預覽階段不自動顯示教室點（僅保留使用者手動切換）
-                if (autoStart) recomputePathAsync()
-            }
-            return@LaunchedEffect
-            }
-
-            // 若無 entry preview required，正常行為：用 entryEntity 或 floor ENTRANCE 作為 start，目標為目標教室
-            val s = entryEntity?.let { Offset((it.x.toFloat() / 100f) * bmp.width, (it.y.toFloat() / 100f) * bmp.height) }
-            val g = Offset((targetEntity.x.toFloat() / 100f) * bmp.width, (targetEntity.y.toFloat() / 100f) * bmp.height)
-
-            start = s
-            goal = g
-
-            if (autoStart) {
-            recomputePathAsync()
-            }
-        }
-        }
-    } catch (e: Exception) {
-        // 忽略錯誤，UI 可顯示或回傳
-    }
-    }
-
-    // 先嘗試從 DB 讀取快取（不需等待圖片載入）。此處不主動建立 overlay，改為在需要顯示時生成。
-    LaunchedEffect(currentImageRes, gridSample) {
-    // 清理目前狀態
-    grid = null
-    overlay = null
-    start = null
-    goal = null
-    path = emptyList()
-    walkableCount = 0
-
-    val cached = withContext(Dispatchers.IO) { gridDao.get(currentImageRes, gridSample) }
-    if (cached != null) {
-        val cells = cached.cells.toBooleanArray(cached.width * cached.height)
-        val g = Grid(cached.width, cached.height, cells)
-        // update UI state on Main (we're in a LaunchedEffect with Main dispatcher)
-        grid = g
-        walkableCount = cells.count { it }
-        // overlay 將在 showGridOverlay=true 時才建立
-    }
-    }
-
-    // ===== 快速診斷：掃描所有 floorPlans，計算以目前閾值判定下的可走格百分比（離線/背景執行） =====
-    // 減少冗長診斷日誌以避免噪音
-    val ENABLE_DIAG_LOGS = false // 想測試時改成 true
-
-    LaunchedEffect(gridSample) {
-    if (!ENABLE_DIAG_LOGS) return@LaunchedEffect
-
-    // 使用 IO Dispatcher 適合讀檔操作，Default 適合運算，這邊兩者皆可，保持 Default 即可
-    scope.launch(Dispatchers.Default) {
-        val sb = StringBuilder()
-
-        // 設定圖片讀取參數：省記憶體模式
-        val options = BitmapFactory.Options().apply {
-        // 1. 使用 RGB_565 格式，比預設的 ARGB_8888 節省 50% 記憶體
-        inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
-
-        // 2. 降採樣 (Downsampling)：讀取 1/2 的寬高
-        // 記憶體佔用會變成原本的 1/4。如果還是爆，可以改成 4 (變成 1/16)
-        inSampleSize = 2
-        }
-
-        try {
-        for ((name, resId) in floorPlans) {
-            // 3. 檢查記憶體，如果已經很吃緊就暫停一下讓 GC 跑
-            System.gc()
-
-            // 載入圖片 (使用上面的省記憶體參數)
-            val bmp = BitmapFactory.decodeResource(context.resources, resId, options)
-
-            if (bmp == null) continue
-
-            try {
-            // 注意：因為圖片縮小了 (inSampleSize=2)，這裡傳入的 sample 可能需要調整
-            // 或者您接受診斷數據是基於縮小圖的近似值
-            val g = bitmapToGridFromWhiteCorridor(
-                bitmap = bmp,
-                sample = gridSample, // 如果您的算法依賴絕對像素，縮圖後可能會有誤差
-                satMax = 0.12f,
-                valMin = 0.92f,
-                wallInflate = 3
-            )
-
-            val walkable = g.cells.count { it }
-            val total = g.w * g.h
-            val pct = if (total == 0) 0 else (walkable * 100 / total)
-
-            sb.append("$name: ${walkable}/$total ($pct%)\n")
-            Log.d("IndoorMap.Diag", "$name -> walkable=$walkable total=$total pct=$pct% grid=${g.w}x${g.h}")
-
-            } finally {
-            // 4. 【關鍵】無論成功或失敗，強制立即釋放圖片記憶體！
-            bmp.recycle()
-            }
-
-            // 5. 喘口氣，讓系統有時間回收剛剛釋放的記憶體，避免短時間內連續 Allocation
-            delay(100)
-        }
-        } catch (e: Exception) {
-        sb.append("diagnostic error: ${e.message}")
-        Log.e("IndoorMap.Diag", "Error running diagnostics", e)
-        }
-
-        withContext(Dispatchers.Main) {
-        floorStatsReport = sb.toString()
-        }
-    }
-    }
-
-    // 若沒快取且圖片已載入，則計算並寫回 DB（不立即建立 overlay，改由顯示需求觸發）
-    LaunchedEffect(imageBitmap, gridSample, currentImageRes) {
-    if (grid != null) return@LaunchedEffect
-    val bmp = imageBitmap?.asAndroidBitmap() ?: return@LaunchedEffect
-
-    val g =
-    withContext(Dispatchers.Default) {
-        bitmapToGridFromWhiteCorridor(
-        bitmap = bmp,
-        sample = gridSample,
-        satMax = 0.12f,
-        valMin = 0.92f,
-        wallInflate = 3
-        )
-    }
-
-    // 更新 UI 狀態 (LaunchedEffect runs on Main dispatcher)
-    grid = g
-    // overlay 延後建立
-    walkableCount = g.cells.count { it }
-
-    // 寫入 DB 快取 - pack bytes off main thread then IO upsert
-    val packed = withContext(Dispatchers.Default) { g.cells.toBitPackedBytes() }
-    withContext(Dispatchers.IO) {
-    gridDao.upsert(
-        GridCacheEntity(
-        imageId = currentImageRes,
-        sample = gridSample,
-        width = g.w,
-        height = g.h,
-        cells = packed
-        )
-    )
-    }
-
-    }
-
-    // 僅在顯示需求時建立/更新 overlay，降低記憶體與 GC 壓力（需置於可組合範疇的最外層，避免嵌套）
-    LaunchedEffect(showGridOverlay, grid) {
-    if (!showGridOverlay) {
-        overlay = null
-        return@LaunchedEffect
-    }
-    val g = grid ?: return@LaunchedEffect
-    overlay = withContext(Dispatchers.Default) { buildGridOverlayBitmap(g) }
-    }
-
-    // 當 start/goal 與 grid 都就緒時，自動計算路徑（補強：避免 target/entry 的 LaunchedEffect 在 grid 構建前就呼叫 recomputePathAsync）
-    LaunchedEffect(start, goal, grid) {
-    if (start != null && goal != null && grid != null) {
-        recomputePathAsync()
-    }
-    }
-
-    // 新增：Overlay 與偵錯統計（原本有使用到，但未宣告）
-
-    Scaffold(
-        topBar = {
-        TopAppBar(
-            title = { Text("平面圖導航", fontWeight = FontWeight.SemiBold) },
-            actions = {
-                // 樓層下拉
-                ExposedDropdownMenuBox(
-                    expanded = expanded,
-                    onExpandedChange = { expanded = !expanded }
-                ) {
-                    TextButton(
-                        onClick = { expanded = true },
-                        modifier = Modifier.menuAnchor()
-                    ) { Text(selectedFloorName) }
-                    ExposedDropdownMenu(
-                        expanded = expanded,
-                        onDismissRequest = { expanded = false }
-                    ) {
-                        floorPlans.forEach { (name, resId) ->
-                        DropdownMenuItem(
-                            text = { Text(name) },
-                            onClick = {
-                                selectedFloorName = name
-                                currentImageRes = resId
-                                expanded = false
-                                // 清狀態
-                                start = null
-                                goal = null
-                                path = emptyList()
-                                grid = null
-                                overlay = null
-                                walkableCount = 0
-                            }
-                        )
-                        }
+                    val segments = planMultiStageRoute(startClassroom, targetEntity, startFloor, endFloor)
+                    if (segments.isNotEmpty()) {
+                        val firstSeg = segments.first()
+                        navigationQueue = segments.drop(1)
+                        currentSegment = firstSeg
+                        showNextStepButton = navigationQueue.isNotEmpty()
+                        // 不立刻處理段落，改由下方 orchestrator 在圖片與網格完成後統一執行
                     }
                 }
 
-                // 建網格 -> 改為 重建網格（手動覆蓋快取）
+                // 室外→室內銜接：入口(ENTRANCE) 作為起點
+                val startEntrance = all.firstOrNull { it.id == entryPointId && it.type.equals("ENTRANCE", true) }
+                if (autoStart && startEntrance != null && targetEntity.type.equals("CLASSROOM", true)) {
+                    val startFloor = withContext(Dispatchers.IO) { db.floorDao().getFloorById(startEntrance.floorId)?.floorNumber } ?: startEntrance.floorId
+                    val endFloor = withContext(Dispatchers.IO) { db.floorDao().getFloorById(targetEntity.floorId)?.floorNumber } ?: targetEntity.floorId
+
+                    val segments = planEntranceToClassroomRoute(startEntrance, targetEntity, startFloor, endFloor)
+                    if (segments.isNotEmpty()) {
+                        val firstSeg = segments.first()
+                        navigationQueue = segments.drop(1)
+                        currentSegment = firstSeg
+                        showNextStepButton = navigationQueue.isNotEmpty()
+                        // 不立刻處理段落，改由下方 orchestrator 在圖片與網格完成後統一執行
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // 忽略錯誤，UI 可顯示或回傳
+        }
+
+    }
+
+    // 移除重複的佇列式初始化 LaunchedEffect，改由上方的單一初始化流程統一處理
+
+
+        // 先嘗試從 DB 讀取快取（不需等待圖片載入）。此處不主動建立 overlay，改為在需要顯示時生成。
+        LaunchedEffect(currentImageRes, gridSample) {
+            // 清理目前狀態
+            grid = null
+            overlay = null
+            start = null
+            goal = null
+            path = emptyList()
+            walkableCount = 0
+
+            val cached = withContext(Dispatchers.IO) { gridDao.get(currentImageRes, gridSample) }
+            if (cached != null) {
+                val cells = cached.cells.toBooleanArray(cached.width * cached.height)
+                val g = Grid(cached.width, cached.height, cells)
+                // update UI state on Main (we're in a LaunchedEffect with Main dispatcher)
+                grid = g
+                walkableCount = cells.count { it }
+                // overlay 將在 showGridOverlay=true 時才建立
+            }
+        }
+
+        // ===== 快速診斷：掃描所有 floorPlans，計算以目前閾值判定下的可走格百分比（離線/背景執行） =====
+        // 減少冗長診斷日誌以避免噪音
+        val ENABLE_DIAG_LOGS = false // 想測試時改成 true
+
+        LaunchedEffect(gridSample) {
+            if (!ENABLE_DIAG_LOGS) return@LaunchedEffect
+
+            // 使用 IO Dispatcher 適合讀檔操作，Default 適合運算，這邊兩者皆可，保持 Default 即可
+            scope.launch(Dispatchers.Default) {
+                val sb = StringBuilder()
+
+                // 設定圖片讀取參數：省記憶體模式
+                val options = BitmapFactory.Options().apply {
+                    // 1. 使用 RGB_565 格式，比預設的 ARGB_8888 節省 50% 記憶體
+                    inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+
+                    // 2. 降採樣 (Downsampling)：讀取 1/2 的寬高
+                    // 記憶體佔用會變成原本的 1/4。如果還是爆，可以改成 4 (變成 1/16)
+                    inSampleSize = 2
+                }
+
+                try {
+                    for ((name, resId) in floorPlans) {
+                        // 3. 檢查記憶體，如果已經很吃緊就暫停一下讓 GC 跑
+                        System.gc()
+
+                        // 載入圖片 (使用上面的省記憶體參數)
+                        val bmp = BitmapFactory.decodeResource(context.resources, resId, options)
+
+                        if (bmp == null) continue
+
+                        try {
+                            // 注意：因為圖片縮小了 (inSampleSize=2)，這裡傳入的 sample 可能需要調整
+                            // 或者您接受診斷數據是基於縮小圖的近似值
+                            val g = bitmapToGridFromWhiteCorridor(
+                                bitmap = bmp,
+                                sample = gridSample, // 如果您的算法依賴絕對像素，縮圖後可能會有誤差
+                                satMax = 0.12f,
+                                valMin = 0.92f,
+                                wallInflate = 3
+                            )
+
+                            val walkable = g.cells.count { it }
+                            val total = g.w * g.h
+                            val pct = if (total == 0) 0 else (walkable * 100 / total)
+
+                            sb.append("$name: ${walkable}/$total ($pct%)\n")
+                            Log.d(
+                                "IndoorMap.Diag",
+                                "$name -> walkable=$walkable total=$total pct=$pct% grid=${g.w}x${g.h}"
+                            )
+
+                        } finally {
+                            // 4. 【關鍵】無論成功或失敗，強制立即釋放圖片記憶體！
+                            bmp.recycle()
+                        }
+
+                        // 5. 喘口氣，讓系統有時間回收剛剛釋放的記憶體，避免短時間內連續 Allocation
+                        delay(100)
+                    }
+                } catch (e: Exception) {
+                    sb.append("diagnostic error: ${e.message}")
+                    Log.e("IndoorMap.Diag", "Error running diagnostics", e)
+                }
+
+                withContext(Dispatchers.Main) {
+                    floorStatsReport = sb.toString()
+                }
+            }
+        }
+
+        // 若沒快取且圖片已載入，則計算並寫回 DB（不立即建立 overlay，改由顯示需求觸發）
+        LaunchedEffect(imageBitmap, gridSample, currentImageRes) {
+            val bmp = imageBitmap?.asAndroidBitmap() ?: return@LaunchedEffect
+
+            // If a cached grid exists but its size doesn't match current image/gridSample ratio, drop and rebuild
+            val expectedW = if (gridSample > 0) (bmp.width / gridSample) else bmp.width
+            val expectedH = if (gridSample > 0) (bmp.height / gridSample) else bmp.height
+            val sizeMatches = grid?.let { it.w == expectedW && it.h == expectedH } ?: false
+            if (grid != null && !sizeMatches) {
+                Log.d("IndoorMap.UI", "Grid size mismatch, rebuilding: grid=${grid?.w}x${grid?.h} expected=${expectedW}x${expectedH} img=${bmp.width}x${bmp.height} sample=$gridSample")
+                grid = null
+            }
+            if (grid != null) return@LaunchedEffect
+
+            val g =
+                withContext(Dispatchers.Default) {
+                    bitmapToGridFromWhiteCorridor(
+                        bitmap = bmp,
+                        sample = gridSample,
+                        satMax = 0.12f,
+                        valMin = 0.92f,
+                        wallInflate = 3
+                    )
+                }
+
+            // 更新 UI 狀態 (LaunchedEffect runs on Main dispatcher)
+            grid = g
+            // overlay 延後建立
+            walkableCount = g.cells.count { it }
+
+            // 寫入 DB 快取 - pack bytes off main thread then IO upsert
+            val packed = withContext(Dispatchers.Default) { g.cells.toBitPackedBytes() }
+            withContext(Dispatchers.IO) {
+                gridDao.upsert(
+                    GridCacheEntity(
+                        imageId = currentImageRes,
+                        sample = gridSample,
+                        width = g.w,
+                        height = g.h,
+                        cells = packed
+                    )
+                )
+            }
+
+        }
+
+        // 僅在顯示需求時建立/更新 overlay，降低記憶體與 GC 壓力（需置於可組合範疇的最外層，避免嵌套）
+        LaunchedEffect(showGridOverlay, grid) {
+            if (!showGridOverlay) {
+                overlay = null
+                return@LaunchedEffect
+            }
+            val g = grid ?: return@LaunchedEffect
+            overlay = withContext(Dispatchers.Default) { buildGridOverlayBitmap(g) }
+        }
+
+        // 當 start/goal 與 grid 都就緒時，自動計算路徑（補強：避免 target/entry 的 LaunchedEffect 在 grid 構建前就呼叫 recomputePathAsync）
+        LaunchedEffect(start, goal, grid) {
+            if (start != null && goal != null && grid != null) {
+                recomputePathAsync()
+            }
+        }
+
+        // 將室內導航判斷與段落處理延後到「圖片已載入且網格建立完成」後統一執行
+        LaunchedEffect(currentSegment) {
+            val seg = currentSegment ?: return@LaunchedEffect
+            // 這裡不直接假設已載入/有網格，交由 processSegment 內部透過 onImageWait 與 waitForGridReady 等待
+            processSegment(
+                segment = seg,
+                db = db,
+                refDao = refDao,
+                scope = this,
+                onUpdate = { s, g, imgRes ->
+                    // 先清空舊路徑與點，避免視覺殘留
+                    path = emptyList()
+                    start = null
+                    goal = null
+                    // 切換到目標圖片
+                    currentImageRes = imgRes
+                    // 設定新起終點（等待圖片載入與網格生成後再自動觸發路徑）
+                    start = s
+                    goal = g
+                },
+                onImageWait = { wantRes ->
+                    withContext(Dispatchers.Default) {
+                        var attempts = 0
+                        while (loadedImageRes != wantRes && attempts < 200) {
+                            attempts++
+                            delay(50)
+                        }
+                    }
+                    loadedImageRes == wantRes
+                },
+                getImageBitmap = { imageBitmap?.asAndroidBitmap() },
+                waitForGridReady = {
+                    withContext(Dispatchers.Default) {
+                        var guard = 0
+                        while (grid == null && guard < 400) {
+                            guard++
+                            delay(50)
+                        }
+                    }
+                },
+                // 不需主動呼叫計算：當 start/goal/grid 就緒時，上方的 LaunchedEffect(start, goal, grid) 會自動觸發
+                triggerPathCalc = { Log.d("IndoorMap", "Segment ready, waiting auto path calc via state effect") }
+            )
+        }
+
+        // 新增：Overlay 與偵錯統計（原本有使用到，但未宣告）
+
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("平面圖導航", fontWeight = FontWeight.SemiBold) },
+                    actions = {
+                        // 樓層下拉
+                        ExposedDropdownMenuBox(
+                            expanded = expanded,
+                            onExpandedChange = { expanded = !expanded }
+                        ) {
+                            TextButton(
+                                onClick = { expanded = true },
+                                modifier = Modifier.menuAnchor()
+                            ) { Text(selectedFloorName) }
+                            ExposedDropdownMenu(
+                                expanded = expanded,
+                                onDismissRequest = { expanded = false }
+                            ) {
+                                floorPlans.forEach { (name, resId) ->
+                                    DropdownMenuItem(
+                                        text = { Text(name) },
+                                        onClick = {
+                                            selectedFloorName = name
+                                            currentImageRes = resId
+                                            expanded = false
+                                            // 清狀態
+                                            start = null
+                                            goal = null
+                                            path = emptyList()
+                                            grid = null
+                                            overlay = null
+                                            walkableCount = 0
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        // 建網格 -> 改為 重建網格（手動覆蓋快取）
 //                TextButton(
 //                    onClick = {
 //                    val bmp =
@@ -978,31 +1227,33 @@ fun IndoorMapScreen(
 //                    path = emptyList()
 //                    }
 //                ) { Text("清除") }
-            }
-        )
-        }
-    ) { padding ->
-        Box(
-            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).padding(padding)
-                .onSizeChanged {
-                    containerWidthPx = it.width.toFloat(); containerHeightPx = it.height.toFloat()
-                }) {
-                    // 定義文字畫筆 (紅色字體 + 白色陰影)
-                    val textPaint = remember {
-                        android.graphics.Paint().apply {
-                            color = android.graphics.Color.RED
-                            textSize = 40f // 字體大小，可依需求調整
-                            isAntiAlias = true
-                            textAlign = android.graphics.Paint.Align.CENTER
-                            typeface = android.graphics.Typeface.DEFAULT_BOLD
-                            // 設定陰影 (半徑, dx, dy, 顏色) - 讓文字在複雜背景上更清楚
-                            setShadowLayer(3f, 0f, 0f, android.graphics.Color.WHITE)
-                        }
                     }
-            imageBitmap?.let { bmp ->
-                Box(
-                    Modifier.fillMaxSize()
-                        .clipToBounds()
+                )
+            }
+        ) { padding ->
+            Box(
+                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)
+                    .padding(padding)
+                    .onSizeChanged {
+                        containerWidthPx = it.width.toFloat(); containerHeightPx =
+                        it.height.toFloat()
+                    }) {
+                // 定義文字畫筆 (紅色字體 + 白色陰影)
+                val textPaint = remember {
+                    android.graphics.Paint().apply {
+                        color = android.graphics.Color.RED
+                        textSize = 40f // 字體大小，可依需求調整
+                        isAntiAlias = true
+                        textAlign = android.graphics.Paint.Align.CENTER
+                        typeface = android.graphics.Typeface.DEFAULT_BOLD
+                        // 設定陰影 (半徑, dx, dy, 顏色) - 讓文字在複雜背景上更清楚
+                        setShadowLayer(3f, 0f, 0f, android.graphics.Color.WHITE)
+                    }
+                }
+                imageBitmap?.let { bmp ->
+                    Box(
+                        Modifier.fillMaxSize()
+                            .clipToBounds()
 //                // 雙擊處理器
 //                .pointerInput(Unit) {
 //                    detectTapGestures(onDoubleTap = { p ->
@@ -1018,485 +1269,401 @@ fun IndoorMapScreen(
 //                    }
 //                    })
 //                }
-                        // 變形（捏合 + 平移）處理器，錨點為手勢中心
-                        .pointerInput(Unit) {
-                            detectTransformGestures { centroid, pan, zoom, _ ->
-                                val bmp = imageBitmap ?: return@detectTransformGestures
-                                val oldScale = scale
-                                val newScale = (oldScale * zoom).coerceIn(minScale, maxScale)
+                            // 變形（捏合 + 平移）處理器，錨點為手勢中心
+                            .pointerInput(Unit) {
+                                detectTransformGestures { centroid, pan, zoom, _ ->
+                                    val bmp = imageBitmap ?: return@detectTransformGestures
+                                    val oldScale = scale
+                                    val newScale = (oldScale * zoom).coerceIn(minScale, maxScale)
 
-                                // 縮放前手勢中心在影像座標的對應點
-                                val imgX = (centroid.x - offsetX) / oldScale
-                                val imgY = (centroid.y - offsetY) / oldScale
+                                    // 縮放前手勢中心在影像座標的對應點
+                                    val imgX = (centroid.x - offsetX) / oldScale
+                                    val imgY = (centroid.y - offsetY) / oldScale
 
-                                // compute new offsets so imgX,imgY stays under centroid
-                                val newOffsetX = centroid.x - imgX * newScale
-                                val newOffsetY = centroid.y - imgY * newScale
+                                    // compute new offsets so imgX,imgY stays under centroid
+                                    val newOffsetX = centroid.x - imgX * newScale
+                                    val newOffsetY = centroid.y - imgY * newScale
 
-                                // apply pan delta
-                                offsetX = newOffsetX + pan.x
-                                offsetY = newOffsetY + pan.y
+                                    // apply pan delta
+                                    offsetX = newOffsetX + pan.x
+                                    offsetY = newOffsetY + pan.y
 
-                                scale = newScale
-                                // clamp to keep image visible
-                                clampOffsets(bmp.width.toFloat(), bmp.height.toFloat())
-                            }
-                        }
-                ) {
-                    // ===== (1) 單一 Canvas，且只畫「可見區域」 =====
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        // 可見區域（影像座標系）
-                        val invScale = 1f / scale
-                        val visLeft = (-offsetX) * invScale
-                        val visTop = (-offsetY) * invScale
-                        val visRight = (size.width - offsetX) * invScale
-                        val visBottom = (size.height - offsetY) * invScale
-
-                        val srcLeft = visLeft.coerceIn(0f, bmp.width.toFloat())
-                        val srcTop = visTop.coerceIn(0f, bmp.height.toFloat())
-                        val srcRight = visRight.coerceIn(0f, bmp.width.toFloat())
-                        val srcBottom = visBottom.coerceIn(0f, bmp.height.toFloat())
-
-                        val dstLeft = srcLeft * scale + offsetX
-                        val dstTop = srcTop * scale + offsetY
-                        val dstRight = srcRight * scale + offsetX
-                        val dstBottom = srcBottom * scale + offsetY
-
-                        val srcW = (srcRight - srcLeft).coerceAtLeast(0f)
-                        val srcH = (srcBottom - srcTop).coerceAtLeast(0f)
-                        val dstW = (dstRight - dstLeft).coerceAtLeast(0f)
-                        val dstH = (dstBottom - dstTop).coerceAtLeast(0f)
-
-                        // 背景圖：只畫可見塊
-                        if (srcW > 0f && srcH > 0f && dstW > 0f && dstH > 0f) {
-                            drawImage(
-                                image = bmp,
-                                srcOffset = IntOffset(srcLeft.toInt(), srcTop.toInt()),
-                                srcSize = IntSize(srcW.toInt(), srcH.toInt()),
-                                dstOffset = IntOffset(dstLeft.toInt(), dstTop.toInt()),
-                                dstSize = IntSize(dstW.toInt(), dstH.toInt())
-                            )
-
-                            // Overlay：用自己的像素座標裁切（grid 像素）
-                            val g = grid
-                            val ov = overlay
-                            if (showGridOverlay && g != null && ov != null) {
-                                // 取樣倍率：原始影像像素 / Grid 像素（通常 = gridSample）
-                                val ovScaleX = imageBitmap!!.width / g.w.toFloat()
-                                val ovScaleY = imageBitmap!!.height / g.h.toFloat()
-
-                                // 把背景圖的 src 矩形換算成 overlay 的 src 矩形（各自用自己的座標系）
-                                val oSrcLeft = (srcLeft / ovScaleX).coerceIn(0f, g.w.toFloat())
-                                val oSrcTop = (srcTop / ovScaleY).coerceIn(0f, g.h.toFloat())
-                                val oSrcRight = (srcRight / ovScaleX).coerceIn(0f, g.w.toFloat())
-                                val oSrcBottom = (srcBottom / ovScaleY).coerceIn(0f, g.h.toFloat())
-
-                                val oSrcW = (oSrcRight - oSrcLeft).coerceAtLeast(0f)
-                                val oSrcH = (oSrcBottom - oSrcTop).coerceAtLeast(0f)
-
-                                if (oSrcW > 0f && oSrcH > 0f) {
-                                    drawImage(
-                                        image = ov,
-                                        srcOffset =
-                                            IntOffset(oSrcLeft.toInt(), oSrcTop.toInt()),
-                                        srcSize = IntSize(oSrcW.toInt(), oSrcH.toInt()),
-                                        // 目的地矩形仍用背景圖的 dst，這樣就能貼齊
-                                        dstOffset = IntOffset(dstLeft.toInt(), dstTop.toInt()),
-                                        dstSize = IntSize(dstW.toInt(), dstH.toInt())
-                                    )
+                                    scale = newScale
+                                    // clamp to keep image visible
+                                    clampOffsets(bmp.width.toFloat(), bmp.height.toFloat())
                                 }
                             }
-                        }
+                    ) {
+                        // ===== (1) 單一 Canvas，且只畫「可見區域」 =====
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            // 可見區域（影像座標系）
+                            val invScale = 1f / scale
+                            val visLeft = (-offsetX) * invScale
+                            val visTop = (-offsetY) * invScale
+                            val visRight = (size.width - offsetX) * invScale
+                            val visBottom = (size.height - offsetY) * invScale
 
-                        // 可視樣式大小（可依需求微調）
-                        val classroomRadius = 10f
-                        val startGoalRadius = 16f
-                        val pathWidth = 12f // 路徑稍微加粗一點
+                            val srcLeft = visLeft.coerceIn(0f, bmp.width.toFloat())
+                            val srcTop = visTop.coerceIn(0f, bmp.height.toFloat())
+                            val srcRight = visRight.coerceIn(0f, bmp.width.toFloat())
+                            val srcBottom = visBottom.coerceIn(0f, bmp.height.toFloat())
 
-                        // === 1. 繪製路徑與連續箭頭 ===
-                        if (path.isNotEmpty()) {
-                            // 先將所有點轉換為螢幕座標
-                            val screenPoints = path.map { imgToScreen(it) }
+                            val dstLeft = srcLeft * scale + offsetX
+                            val dstTop = srcTop * scale + offsetY
+                            val dstRight = srcRight * scale + offsetX
+                            val dstBottom = srcBottom * scale + offsetY
 
-                            // A. 畫路徑底線
-                            val p = Path().apply {
-                                moveTo(screenPoints.first().x, screenPoints.first().y)
-                                for (i in 1 until screenPoints.size) {
-                                    lineTo(screenPoints[i].x, screenPoints[i].y)
-                                }
-                            }
+                            val srcW = (srcRight - srcLeft).coerceAtLeast(0f)
+                            val srcH = (srcBottom - srcTop).coerceAtLeast(0f)
+                            val dstW = (dstRight - dstLeft).coerceAtLeast(0f)
+                            val dstH = (dstBottom - dstTop).coerceAtLeast(0f)
 
-                            // 畫主線條 (使用 secondary 顏色，或是您想要的顏色)
-                            drawPath(
-                                path = p,
-                                color = Color.LightGray,
-                                style = Stroke(
-                                    width = pathWidth,
-                                    cap = StrokeCap.Round,
-                                    join = StrokeJoin.Round
+                            // 背景圖：只畫可見塊
+                            if (srcW > 0f && srcH > 0f && dstW > 0f && dstH > 0f) {
+                                drawImage(
+                                    image = bmp,
+                                    srcOffset = IntOffset(srcLeft.toInt(), srcTop.toInt()),
+                                    srcSize = IntSize(srcW.toInt(), srcH.toInt()),
+                                    dstOffset = IntOffset(dstLeft.toInt(), dstTop.toInt()),
+                                    dstSize = IntSize(dstW.toInt(), dstH.toInt())
                                 )
-                            )
 
-                            // B. 畫等距方向箭頭
-                            val arrowSpacing = 80f // 箭頭間距 (您可以依需求調整，例如 60f~100f)
-                            val arrowSize = 25f    // 箭頭大小
-                            var distanceAccumulator = 0f // 累計距離，確保跨線段時箭頭間距均勻
+                                // Overlay：用自己的像素座標裁切（grid 像素）
+                                val g = grid
+                                val ov = overlay
+                                if (showGridOverlay && g != null && ov != null) {
+                                    // 取樣倍率：原始影像像素 / Grid 像素（通常 = gridSample）
+                                    val ovScaleX = imageBitmap!!.width / g.w.toFloat()
+                                    val ovScaleY = imageBitmap!!.height / g.h.toFloat()
 
-                            for (i in 0 until screenPoints.size - 1) {
-                                val p1 = screenPoints[i]
-                                val p2 = screenPoints[i+1]
+                                    // 把背景圖的 src 矩形換算成 overlay 的 src 矩形（各自用自己的座標系）
+                                    val oSrcLeft = (srcLeft / ovScaleX).coerceIn(0f, g.w.toFloat())
+                                    val oSrcTop = (srcTop / ovScaleY).coerceIn(0f, g.h.toFloat())
+                                    val oSrcRight =
+                                        (srcRight / ovScaleX).coerceIn(0f, g.w.toFloat())
+                                    val oSrcBottom =
+                                        (srcBottom / ovScaleY).coerceIn(0f, g.h.toFloat())
 
-                                val dx = p2.x - p1.x
-                                val dy = p2.y - p1.y
-                                val segmentDist = hypot(dx, dy)
+                                    val oSrcW = (oSrcRight - oSrcLeft).coerceAtLeast(0f)
+                                    val oSrcH = (oSrcBottom - oSrcTop).coerceAtLeast(0f)
 
-                                if (segmentDist == 0f) continue
-
-                                val angle = atan2(dy, dx)
-
-                                // 計算這一點開始的第一個箭頭位置
-                                var currentPos = arrowSpacing - distanceAccumulator
-
-                                while (currentPos <= segmentDist) {
-                                    // 計算箭頭在當前線段上的位置比例 t (0.0 ~ 1.0)
-                                    val t = currentPos / segmentDist
-                                    val ax = p1.x + t * dx
-                                    val ay = p1.y + t * dy
-
-                                    // 計算箭頭兩翼座標
-                                    val wingAngle = 0.5f // 箭頭開合角度 (弧度)
-
-                                    // 畫紅色箭頭 (或是白色，視您的路徑顏色而定)
-                                    // 這裡使用紅色讓它在藍/黃色路徑上更顯眼
-
-                                    val arrowPath = Path().apply {
-                                        moveTo(ax, ay) // 箭頭尖端
-                                        // 左翼
-                                        lineTo(
-                                            ax - arrowSize * cos(angle - wingAngle),
-                                            ay - arrowSize * sin(angle - wingAngle)
-                                        )
-                                        // 右翼 (這裡用 moveTo 回到尖端再畫，或者直接畫成三角形)
-                                        moveTo(ax, ay)
-                                        lineTo(
-                                            ax - arrowSize * cos(angle + wingAngle),
-                                            ay - arrowSize * sin(angle + wingAngle)
+                                    if (oSrcW > 0f && oSrcH > 0f) {
+                                        drawImage(
+                                            image = ov,
+                                            srcOffset =
+                                                IntOffset(oSrcLeft.toInt(), oSrcTop.toInt()),
+                                            srcSize = IntSize(oSrcW.toInt(), oSrcH.toInt()),
+                                            // 目的地矩形仍用背景圖的 dst，這樣就能貼齊
+                                            dstOffset = IntOffset(dstLeft.toInt(), dstTop.toInt()),
+                                            dstSize = IntSize(dstW.toInt(), dstH.toInt())
                                         )
                                     }
+                                }
+                            }
 
-                                    drawPath(
-                                        path = arrowPath,
-                                        color = ComposeColor.Blue,
-                                        style = Stroke(width = 6f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-                                    )
+                            // 可視樣式大小（可依需求微調）
+                            val classroomRadius = 10f
+                            val startGoalRadius = 16f
+                            val pathWidth = 12f // 路徑稍微加粗一點
 
-                                    // 前進到下一個箭頭位置
-                                    currentPos += arrowSpacing
+                            // === 1. 繪製路徑與連續箭頭 ===
+                            if (path.isNotEmpty()) {
+                                // 先將所有點轉換為螢幕座標
+                                val screenPoints = path.map { imgToScreen(it) }
+
+                                // A. 畫路徑底線
+                                val p = Path().apply {
+                                    moveTo(screenPoints.first().x, screenPoints.first().y)
+                                    for (i in 1 until screenPoints.size) {
+                                        lineTo(screenPoints[i].x, screenPoints[i].y)
+                                    }
                                 }
 
-                                // 計算這段線段「剩餘」的距離，留給下一段線段使用
-                                // 這樣箭頭在轉彎處的間距才會準確
-                                distanceAccumulator = (distanceAccumulator + segmentDist) % arrowSpacing
-                            }
-                        }
+                                // 畫主線條 (使用 secondary 顏色，或是您想要的顏色)
+                                drawPath(
+                                    path = p,
+                                    color = Color.LightGray,
+                                    style = Stroke(
+                                        width = pathWidth,
+                                        cap = StrokeCap.Round,
+                                        join = StrokeJoin.Round
+                                    )
+                                )
 
-                        // === 2. 繪製起點 (綠色 + 文字) ===
-                        start?.let {
-                            val s = imgToScreen(it)
-                            drawCircle(color = ComposeColor.Green, radius = startGoalRadius, center = s)
-                            drawCircle(color = ComposeColor.White, radius = startGoalRadius * 0.5f, center = s)
-                            drawContext.canvas.nativeCanvas.drawText(
-                                "起點", s.x, s.y - 30f, textPaint
-                            )
-                        }
+                                // B. 畫等距方向箭頭
+                                val arrowSpacing = 80f // 箭頭間距 (您可以依需求調整，例如 60f~100f)
+                                val arrowSize = 25f    // 箭頭大小
+                                var distanceAccumulator = 0f // 累計距離，確保跨線段時箭頭間距均勻
 
-                        // === 3. 繪製終點 (紅色 + 文字) ===
-                        goal?.let {
-                            val g2 = imgToScreen(it)
-                            drawCircle(color = ComposeColor.Red, radius = startGoalRadius, center = g2)
-                            drawCircle(color = ComposeColor.White, radius = startGoalRadius * 0.5f, center = g2)
-                            drawContext.canvas.nativeCanvas.drawText(
-                                "終點", g2.x, g2.y - 30f, textPaint
-                            )
-                        }
+                                for (i in 0 until screenPoints.size - 1) {
+                                    val p1 = screenPoints[i]
+                                    val p2 = screenPoints[i + 1]
 
-                        // 教室點（影像百分比 -> 影像像素 -> 螢幕座標）
-                        if (showClassrooms && classroomPoints.isNotEmpty()) {
-                            classroomPoints.forEach { rp ->
-                                val imgX = (rp.x.toFloat() / 100f) * bmp.width
-                                val imgY = (rp.y.toFloat() / 100f) * bmp.height
-                                val scr = imgToScreen(Offset(imgX, imgY))
+                                    val dx = p2.x - p1.x
+                                    val dy = p2.y - p1.y
+                                    val segmentDist = hypot(dx, dy)
 
-                                // 判斷是否為出入口：型別為 ENTRANCE 或 名稱包含「入口」
-                                val isEntrance = try {
-                                    rp.type.equals("ENTRANCE", true) || rp.name.contains("入口")
-                                } catch (_: Exception) {
-                                    false
+                                    if (segmentDist == 0f) continue
+
+                                    val angle = atan2(dy, dx)
+
+                                    // 計算這一點開始的第一個箭頭位置
+                                    var currentPos = arrowSpacing - distanceAccumulator
+
+                                    while (currentPos <= segmentDist) {
+                                        // 計算箭頭在當前線段上的位置比例 t (0.0 ~ 1.0)
+                                        val t = currentPos / segmentDist
+                                        val ax = p1.x + t * dx
+                                        val ay = p1.y + t * dy
+
+                                        // 計算箭頭兩翼座標
+                                        val wingAngle = 0.5f // 箭頭開合角度 (弧度)
+
+                                        // 畫紅色箭頭 (或是白色，視您的路徑顏色而定)
+                                        // 這裡使用紅色讓它在藍/黃色路徑上更顯眼
+
+                                        val arrowPath = Path().apply {
+                                            moveTo(ax, ay) // 箭頭尖端
+                                            // 左翼
+                                            lineTo(
+                                                ax - arrowSize * cos(angle - wingAngle),
+                                                ay - arrowSize * sin(angle - wingAngle)
+                                            )
+                                            // 右翼 (這裡用 moveTo 回到尖端再畫，或者直接畫成三角形)
+                                            moveTo(ax, ay)
+                                            lineTo(
+                                                ax - arrowSize * cos(angle + wingAngle),
+                                                ay - arrowSize * sin(angle + wingAngle)
+                                            )
+                                        }
+
+                                        drawPath(
+                                            path = arrowPath,
+                                            color = ComposeColor.Blue,
+                                            style = Stroke(
+                                                width = 6f,
+                                                cap = androidx.compose.ui.graphics.StrokeCap.Round
+                                            )
+                                        )
+
+                                        // 前進到下一個箭頭位置
+                                        currentPos += arrowSpacing
+                                    }
+
+                                    // 計算這段線段「剩餘」的距離，留給下一段線段使用
+                                    // 這樣箭頭在轉彎處的間距才會準確
+                                    distanceAccumulator =
+                                        (distanceAccumulator + segmentDist) % arrowSpacing
                                 }
+                            }
 
-                                val pointColor =
-                                    if (isEntrance) ComposeColor.Blue else colorMaterial.primary.copy(
-                                        alpha = 0.9f
+                            // === 2. 繪製起點 (綠色 + 文字) ===
+                            start?.let {
+                                val s = imgToScreen(it)
+                                drawCircle(color = ComposeColor.Green, radius = startGoalRadius, center = s)
+                                drawCircle(color = ComposeColor.White, radius = startGoalRadius * 0.5f, center = s)
+                                drawContext.canvas.nativeCanvas.drawText("起點", s.x, s.y - 30f, textPaint)
+                            }
+
+                            // === 3. 繪製終點 (紅色 + 文字) ===
+                            goal?.let {
+                                val g2 = imgToScreen(it)
+                                drawCircle(color = ComposeColor.Red, radius = startGoalRadius, center = g2)
+                                drawCircle(color = ComposeColor.White, radius = startGoalRadius * 0.5f, center = g2)
+                                drawContext.canvas.nativeCanvas.drawText("終點", g2.x, g2.y - 30f, textPaint)
+                            }
+
+                            // 教室點（影像百分比 -> 影像像素 -> 螢幕座標）
+                            if (showClassrooms && classroomPoints.isNotEmpty()) {
+                                classroomPoints.forEach { rp ->
+                                    val imgX = (rp.x.toFloat() / 100f) * bmp.width
+                                    val imgY = (rp.y.toFloat() / 100f) * bmp.height
+                                    val scr = imgToScreen(Offset(imgX, imgY))
+
+                                    // 判斷是否為出入口：型別為 ENTRANCE 或 名稱包含「入口」
+                                    val isEntrance = try {
+                                        rp.type.equals("ENTRANCE", true) || rp.name.contains("入口")
+                                    } catch (_: Exception) {
+                                        false
+                                    }
+
+                                    val pointColor =
+                                        if (isEntrance) ComposeColor.Blue else colorMaterial.primary.copy(
+                                            alpha = 0.9f
+                                        )
+
+                                    drawCircle(
+                                        color = pointColor,
+                                        radius = classroomRadius,
+                                        center = scr
+                                    )
+                                }
+                            }
+                            if (isLikelyIndoors && positionState.mapGroupName != null && positionState.mapPercentage != null) {
+
+                                // 2. 檢查「目前顯示的圖片」是否等於「定位所在的樓層」
+                                // 利用 LocationViewModel 中的 getMapResId 來取得定位樓層的 Resource ID
+                                val userMapResId = getMapResId(positionState.mapGroupName)
+
+                                if (userMapResId == currentImageRes) {
+                                    val userPercent = positionState.mapPercentage!!
+                                    // 3. 座標轉換：百分比 -> 圖片像素 -> 螢幕座標
+                                    // bmp.width 是原始圖片寬度，bmp.height 是原始圖片高度
+                                    val imgX = (userPercent.x / 100f) * bmp.width
+                                    val imgY = (userPercent.y / 100f) * bmp.height
+
+                                    // 使用你現有的 imgToScreen 函式轉換成縮放平移後的螢幕座標
+                                    val screenPos = imgToScreen(Offset(imgX, imgY))
+
+                                    // 4. 開始繪製
+                                    // (A) 繪製半透明的精確度範圍圈 (淺藍色光暈)
+                                    drawCircle(
+                                        color = colorMaterial.primary.copy(alpha = 0.3f),
+                                        radius = 50f, // 可以根據需求調整大小
+                                        center = screenPos
                                     )
 
-                                drawCircle(
-                                    color = pointColor,
-                                    radius = classroomRadius,
-                                    center = scr
-                                )
+                                    // (B) 繪製外圈白框 (讓藍點在深色背景也看得到)
+                                    drawCircle(
+                                        color = ComposeColor.White,
+                                        radius = 25f,
+                                        center = screenPos,
+                                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 5f)
+                                    )
+
+                                    // (C) 繪製實心藍點 (你的位置)
+                                    drawCircle(
+                                        color = ComposeColor.Blue, // 或者使用 colorMaterial.primary
+                                        radius = 20f,
+                                        center = screenPos
+                                    )
+                                }
                             }
                         }
-                        if (isLikelyIndoors && positionState.mapGroupName != null && positionState.mapPercentage != null) {
+                        // 顯示定位樓層切換按鈕：只要有樓層名稱與圖片已載入即可顯示（不再受 isLikelyIndoors 影響）
+                        if (isLikelyIndoors && positionState.mapGroupName != null) {
+                            ExtendedFloatingActionButton(
+                                // 1. 設定點擊行為
+                                onClick = {
+                                    val targetResId = getMapResId(positionState.mapGroupName)
 
-                            // 2. 檢查「目前顯示的圖片」是否等於「定位所在的樓層」
-                            // 利用 LocationViewModel 中的 getMapResId 來取得定位樓層的 Resource ID
-                            val userMapResId = getMapResId(positionState.mapGroupName)
+                                    // 只有在資源 ID 有效時才執行
+                                    if (targetResId != 0) {
+                                        // A. 切換圖片
+                                        currentImageRes = targetResId
+                                        selectedFloorName =
+                                            floorPlans.find { it.second == targetResId }?.first
+                                                ?: positionState.mapGroupName!!
 
-                            if (userMapResId == currentImageRes) {
-                                val userPercent = positionState.mapPercentage!!
-                                // 3. 座標轉換：百分比 -> 圖片像素 -> 螢幕座標
-                                // bmp.width 是原始圖片寬度，bmp.height 是原始圖片高度
-                                val imgX = (userPercent.x / 100f) * bmp.width
-                                val imgY = (userPercent.y / 100f) * bmp.height
+                                        // B. 計算自動置中與縮放 (取代舊的 setZoom/setScrollPosition)
+                                        // 必須確認有定位百分比，且圖片 Bitmap 已載入才能計算
+                                        val currentPercent = positionState.mapPercentage
+                                        val currentBmp = imageBitmap?.asAndroidBitmap()
 
-                                // 使用你現有的 imgToScreen 函式轉換成縮放平移後的螢幕座標
-                                val screenPos = imgToScreen(Offset(imgX, imgY))
+                                        if (currentPercent != null && currentBmp != null) {
+                                            // 設定一個目標縮放值 (例如放大到 3 倍)
+                                            val targetScale = 3f
+                                            scale = targetScale
 
-                                // 4. 開始繪製
-                                // (A) 繪製半透明的精確度範圍圈 (淺藍色光暈)
-                                drawCircle(
-                                    color = colorMaterial.primary.copy(alpha = 0.3f),
-                                    radius = 50f, // 可以根據需求調整大小
-                                    center = screenPos
-                                )
+                                            // 計算目標點在圖片上的原始像素位置
+                                            val imgX = (currentPercent.x / 100f) * currentBmp.width
+                                            val imgY = (currentPercent.y / 100f) * currentBmp.height
 
-                                // (B) 繪製外圈白框 (讓藍點在深色背景也看得到)
-                                drawCircle(
-                                    color = ComposeColor.White,
-                                    radius = 25f,
-                                    center = screenPos,
-                                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 5f)
-                                )
+                                            // 計算 Offset 讓該點位於畫面中心
+                                            // 公式: (容器一半寬度) - (圖片點位置 * 縮放倍率)
+                                            offsetX = (containerWidthPx / 2f) - (imgX * targetScale)
+                                            offsetY =
+                                                (containerHeightPx / 2f) - (imgY * targetScale)
 
-                                // (C) 繪製實心藍點 (你的位置)
-                                drawCircle(
-                                    color = ComposeColor.Blue, // 或者使用 colorMaterial.primary
-                                    radius = 20f,
-                                    center = screenPos
-                                )
-                            }
+                                            // 限制範圍，避免留白 (呼叫你現有的 clampOffsets)
+                                            clampOffsets(
+                                                currentBmp.width.toFloat(),
+                                                currentBmp.height.toFloat()
+                                            )
+                                        }
+                                    }
+                                },
+                                // 2. 設定位置與樣式
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd) // 靠右下角
+                                    .padding(16.dp)             // 邊距
+                                    .zIndex(3f),                // 確保浮在最上層
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                                // 3. 設定圖示
+                                icon = {
+                                    Icon(
+                                        imageVector = Icons.Default.MyLocation,
+                                        contentDescription = "我的位置"
+                                    )
+                                },
+                                // 4. 設定文字
+                                text = {
+                                    Text(
+                                        text = getFloorDisplayName(positionState.mapGroupName),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            )
                         }
                     }
-                    if (isLikelyIndoors && positionState.mapGroupName != null) {
-                        ExtendedFloatingActionButton(
-                            // 1. 設定點擊行為
-                            onClick = {
-                                val targetResId = getMapResId(positionState.mapGroupName)
+                }
+                    ?: run {
+                        Box(
+                            Modifier.fillMaxSize(),
+                            contentAlignment = androidx.compose.ui.Alignment.Center
+                        ) { Text("尚未載入平面圖資源") }
+                    }
 
-                                // 只有在資源 ID 有效時才執行
-                                if (targetResId != 0) {
-                                    // A. 切換圖片
-                                    currentImageRes = targetResId
-                                    selectedFloorName =
-                                        floorPlans.find { it.second == targetResId }?.first
-                                            ?: positionState.mapGroupName!!
 
-                                    // B. 計算自動置中與縮放 (取代舊的 setZoom/setScrollPosition)
-                                    // 必須確認有定位百分比，且圖片 Bitmap 已載入才能計算
-                                    val currentPercent = positionState.mapPercentage
-                                    val currentBmp = imageBitmap?.asAndroidBitmap()
-
-                                    if (currentPercent != null && currentBmp != null) {
-                                        // 設定一個目標縮放值 (例如放大到 3 倍)
-                                        val targetScale = 3f
-                                        scale = targetScale
-
-                                        // 計算目標點在圖片上的原始像素位置
-                                        val imgX = (currentPercent.x / 100f) * currentBmp.width
-                                        val imgY = (currentPercent.y / 100f) * currentBmp.height
-
-                                        // 計算 Offset 讓該點位於畫面中心
-                                        // 公式: (容器一半寬度) - (圖片點位置 * 縮放倍率)
-                                        offsetX = (containerWidthPx / 2f) - (imgX * targetScale)
-                                        offsetY = (containerHeightPx / 2f) - (imgY * targetScale)
-
-                                        // 限制範圍，避免留白 (呼叫你現有的 clampOffsets)
-                                        clampOffsets(
-                                            currentBmp.width.toFloat(),
-                                            currentBmp.height.toFloat()
-                                        )
-                                    }
-                                }
-                            },
-                            // 2. 設定位置與樣式
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd) // 靠右下角
-                                .padding(16.dp)             // 邊距
-                                .zIndex(3f),                // 確保浮在最上層
-                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                            // 3. 設定圖示
-                            icon = {
-                                Icon(
-                                    imageVector = Icons.Default.MyLocation,
-                                    contentDescription = "我的位置"
-                                )
-                            },
-                            // 4. 設定文字
-                            text = {
-                                Text(
-                                    text = getFloorDisplayName(positionState.mapGroupName),
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                // 左下角返回室外地圖按鈕（僅在有導航時顯示：start 與 goal 皆存在）
+                if (start != null && goal != null) {
+                    FloatingActionButton(
+                        onClick = { navController?.popBackStack() },
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(12.dp)
+                            .zIndex(3f),
+                        containerColor = MaterialTheme.colorScheme.primary
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "返回地圖",
+                            tint = MaterialTheme.colorScheme.onPrimary
                         )
                     }
                 }
-            }
-                ?: run {
+
+
+                // 移除預覽階段按鈕（入口/樓層預覽不再使用）
+
+                // 多段式導航：下一步按鈕（僅在有佇列時顯示；不影響原 preview 按鈕）
+                if (showNextStepButton && currentSegment != null) {
                     Box(
-                        Modifier.fillMaxSize(),
-                        contentAlignment = androidx.compose.ui.Alignment.Center
-                    ) { Text("尚未載入平面圖資源") }
-                }
-
-
-            // 左下角返回室外地圖按鈕（僅在有導航時顯示：start 與 goal 皆存在）
-            if (start != null && goal != null) {
-                FloatingActionButton(
-                    onClick = { navController?.popBackStack() },
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(12.dp)
-                        .zIndex(3f),
-                    containerColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowBack,
-                        contentDescription = "返回地圖",
-                        tint = MaterialTheme.colorScheme.onPrimary
-                    )
-                }
-            }
-
-
-            // 若處於 entry preview 階段，顯示底部按鈕讓使用者表示「已到達指定樓層」，按下後切換到目標樓層並計算從該樓層垂直點到教室的路徑
-            if (previewEntryPhase && previewEntryEntity != null && previewTargetEntity != null) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(12.dp)
-                        .zIndex(3f)
-                ) {
-                    Button(onClick = {
-                        scope.launch {
-                            // 切換到目標樓層圖片
-                            val target = previewTargetEntity ?: return@launch
-                            val entry = previewEntryEntity ?: return@launch
-                            // set image to target floor, wait until the correct resource is loaded
-                            Log.d(
-                                "IndoorMap.UI",
-                                "Arrival button pressed: switching to target=${target.id} imageId=${target.imageId}"
-                            )
-                            currentImageRes = target.imageId
-                            withContext(Dispatchers.Default) {
-                                var attempts = 0
-                                val wantRes = target.imageId
-                                while (loadedImageRes != wantRes && attempts < 100) {
-                                    attempts++
-                                    delay(60)
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(12.dp)
+                            .zIndex(3f)
+                    ) {
+                        Button(onClick = {
+                            scope.launch {
+                                if (navigationQueue.isNotEmpty()) {
+                                    val nextSeg = navigationQueue.first()
+                                    navigationQueue = navigationQueue.drop(1)
+                                    // 清理上一段的可視狀態，避免誤導
+                                    start = null
+                                    goal = null
+                                    path = emptyList()
+                                    // 僅更新段落，實際處理交由 orchestrator 進行（等待圖片與網格）
+                                    currentSegment = nextSeg
+                                    showNextStepButton = navigationQueue.isNotEmpty()
                                 }
                             }
-
-                            val bmp =
-                                if (loadedImageRes == target.imageId) imageBitmap?.asAndroidBitmap() else null
-                            if (bmp == null) {
-                                Log.d(
-                                    "IndoorMap.UI",
-                                    "Target image not ready: want=${target.imageId} loaded=${loadedImageRes}"
-                                )
-                                return@launch
-                            }
-
-                            // 查找目標樓層的垂直點候選
-                            val all =
-                                withContext(Dispatchers.IO) {
-                                    refDao.getAllReferencePoints().first()
-                                }
-                            val rawOnTarget = loadRawReferencePointsForImage(target.imageId)
-                            val destCandidates = (all + rawOnTarget).filter {
-                                it.imageId == target.imageId && (
-                                    it.type.equals("STAIRS", true) ||
-                                        it.type.equals("ELEVATOR", true) ||
-                                        it.name.contains("電梯", ignoreCase = true) ||
-                                        it.name.contains("樓梯", ignoreCase = true) ||
-                                        it.name.contains("elevator", ignoreCase = true) ||
-                                        it.name.contains("stair", ignoreCase = true)
-                                    )
-                            }.distinctBy { it.id }
-
-                            // 簡化且固定邏輯：目標樓層一律優先使用電梯 (ELEVATOR)，再回退其他垂直點
-                            // 目標樓層：電梯(或樓梯) -> 教室
-                            val targetNameLower = target.name.trim().lowercase()
-                            val buildingPrefix = when {
-                                targetNameLower.startsWith("sea") -> "sea"
-                                targetNameLower.startsWith("seb") -> "seb"
-                                targetNameLower.startsWith("sec") -> "sec"
-                                else -> ""
-                            }
-                            // 取得樓層號（floorNumber）
-                            val targetFloorEntity = withContext(Dispatchers.IO) {
-                                db.floorDao().getFloorById(target.floorId)
-                            }
-                            val floorNumber = targetFloorEntity?.floorNumber ?: target.floorId
-                            val wantElevatorName =
-                                if (buildingPrefix.isNotEmpty()) "${buildingPrefix}${floorNumber}" else ""
-                            val floorVerticalAll = destCandidates
-                            val elevatorsOnFloor = floorVerticalAll.filter {
-                                it.type.equals("ELEVATOR", true) ||
-                                        it.name.contains("電梯", ignoreCase = true) ||
-                                        it.name.contains("elevator", ignoreCase = true)
-                            }
-                            var startVertical: ReferencePointEntity? = null
-                            if (wantElevatorName.isNotEmpty()) {
-                                startVertical = elevatorsOnFloor.firstOrNull {
-                                    it.name.lowercase()
-                                        .contains(wantElevatorName) && it.type.equals(
-                                        "ELEVATOR",
-                                        true
-                                    )
-                                }
-                            }
-                            if (startVertical == null && wantElevatorName.isNotEmpty()) {
-                                startVertical = floorVerticalAll.firstOrNull {
-                                    it.name.lowercase()
-                                        .contains(wantElevatorName) && it.type.equals(
-                                        "STAIRS",
-                                        true
-                                    )
-                                }
-                            }
-                            val startPt = startVertical?.let {
-                                Offset(
-                                    (it.x.toFloat() / 100f) * bmp.width,
-                                    (it.y.toFloat() / 100f) * bmp.height
-                                )
-                            }
-                            val goalPt = Offset(
-                                (target.x.toFloat() / 100f) * bmp.width,
-                                (target.y.toFloat() / 100f) * bmp.height
-                            )
-                            start = startPt
-                            goal = goalPt
-                            previewEntryPhase = false
-                            // 僅開始計算路徑；教室點預設保持關閉
-                            recomputePathAsync()
+                        }) {
+                            Text(text = currentSegment?.description ?: "下一步")
                         }
-                    }) {
-                        Text(text = "已到達 ${previewTargetFloorName ?: "目標樓層"}")
                     }
                 }
-            }
 
 //        // 顯示 debug 訊息（若有）
 //        if (debugInfo.isNotBlank()) {
@@ -1517,6 +1684,6 @@ fun IndoorMapScreen(
 //            }
 //        }
 
+            }
         }
     }
-}

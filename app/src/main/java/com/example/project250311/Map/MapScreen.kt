@@ -626,11 +626,14 @@ fun MapScreen(navController: NavHostController) {
                                                     oMatches.firstOrNull()
                                                 } else null
 
-                                                // 若起點與目的地都能對到室內參考點，且在同一張圖（同一樓層/建築），則直接進入室內導航
-                                                if (originRef != null && destRef != null && originRef.buildingId == destRef.buildingId && originRef.floorId == destRef.floorId) {
-                                                    // 使用起點教室作為 entryPointId，目的地教室作為 targetPointId
+                                                // 若起點與目的地都能對到室內教室，無論是否同樓層/棟別，直接進入室內導航
+                                                if (originRef != null && destRef != null &&
+                                                    originRef.type.equals("CLASSROOM", true) &&
+                                                    destRef.type.equals("CLASSROOM", true)
+                                                ) {
+                                                    // 起點教室作為 entryPointId，目的地教室作為 targetPointId
                                                     val route = "indoor/${destRef.buildingId}/${destRef.floorId}/${destRef.id}/${originRef.id}"
-                                                    // 導航至室內畫面（不要再畫戶外路線）
+                                                    Log.d("MapScreen.Indoor", "Direct indoor jump: route=$route origin=${originRef.id} dest=${destRef.id}")
                                                     navController.navigate(route)
                                                     return@launch
                                                 }
